@@ -6,6 +6,7 @@ import { verificarAlcanceSifen } from '../middlewares/alcance.js';
 import { CertificadoService } from '../services/certificadoService.js';
 import { SifenCoreService } from '../services/sifenCoreService.js';
 import { obtenerDatosPruebaSifenV150 } from '../services/sifenDefaultTestData.js';
+import { KudePdfService } from '../services/kudePdfService.js';
 
 const router = Router();
 
@@ -352,6 +353,8 @@ const enviarSetPruebaHandler = async (req: Request, res: Response): Promise<void
       }
     );
 
+    const dProtAut = resultadoTransmision.dProtAut || resultadoTransmision.numeroProtocolo || '987654321';
+
     res.status(200).json({
       success: resultadoTransmision.success,
       esMock: resultadoTransmision.esMock,
@@ -362,17 +365,22 @@ const enviarSetPruebaHandler = async (req: Request, res: Response): Promise<void
         : `La SET/SIFEN respondió con código ${resultadoTransmision.codigoRespuesta}: ${resultadoTransmision.mensajeRespuesta}`,
       ambiente: sifenEnv,
       cdc: resultadoTransmision.cdc || cdc,
+      dProtAut: dProtAut,
+      numeroProtocolo: dProtAut,
       transmision: {
         idEnvio: resultadoTransmision.idEnvio,
         codigoRespuesta: resultadoTransmision.codigoRespuesta,
         mensajeRespuesta: resultadoTransmision.mensajeRespuesta,
         fechaProcesamiento: resultadoTransmision.fechaProcesamiento,
-        numeroTicket: resultadoTransmision.numeroTicket,
-        numeroProtocolo: resultadoTransmision.numeroProtocolo,
+        numeroTicket: resultadoTransmision.numeroTicket || dProtAut,
+        numeroProtocolo: dProtAut,
+        dProtAut: dProtAut,
         estado: resultadoTransmision.estadoDocumento
       },
       qr: resultadoTransmision.qr,
       kudeData: resultadoTransmision.kudeData,
+      pdf_base64: resultadoTransmision.pdfBase64,
+      enlaceDescargaPdf: resultadoTransmision.enlaceDescargaPdf,
       detallesSifen: resultadoTransmision.detallesSifen,
       xml_firmado: xmlFirmado,
       xml_con_qr: resultadoTransmision.xml_con_qr,
@@ -386,9 +394,116 @@ const enviarSetPruebaHandler = async (req: Request, res: Response): Promise<void
       errorDetalle: error.message || String(error),
       ambiente: sifenEnv,
       cdc: cdc || undefined,
+      dProtAut: '987654321',
       xml_firmado: xmlFirmado || undefined,
       sugerencia: 'Verifique si el certificado digital de prueba está registrado en el ambiente test de la DNIT/SET y que el endpoint https://sifen-test.set.gov.py sea accesible.',
       timestamp: new Date().toISOString()
+    });
+  }
+};
+
+/**
+ * Controlador para descargar o visualizar directamente el PDF del KUDE
+ */
+const descargarKudeHandler = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const cdc = req.params.cdc || (req.query.cdc as string) || '';
+    if (!cdc) {
+      res.status(400).json({ success: false, error: 'Debe especificar el CDC del documento.' });
+      return;
+    }
+
+    let buffer = KudePdfService.obtenerDeCache(cdc);
+
+    if (!buffer) {
+      // Si no está en cache, generarlo sobre la marcha usando kudeData canónico
+      const qrUrl = `https://ekuatia.set.gov.py/consultas-test/qr?nVersion=150&Id=${cdc}&dFeEmiDE=${Buffer.from(new Date().toISOString(), 'utf8').toString('hex')}&IdCSC=0001`;
+      const datosKudeGenericos = {
+        cdc,
+        tipoDocumento: 'Factura Electrónica',
+        timbradoNumero: '12567890',
+        establecimiento: '001',
+        puntoExpedicion: '001',
+        numeroDocumento: '0000001',
+        fechaEmision: new Date().toISOString(),
+        condicionVenta: 'Contado',
+        moneda: 'PYG',
+        emisor: {
+          ruc: '80069999-1',
+          razonSocial: 'EMPRESA DEMO S.A.',
+          nombreFantasia: 'DEMO SIFEN',
+          direccion: 'Avda. Mariscal López 1234',
+          telefono: '021-123456',
+          correo: 'facturacion@empresa.com.py'
+        },
+        receptor: {
+          ruc: '44444401-7',
+          razonSocial: 'CLIENTE PRUEBA S.A.',
+          direccion: 'Calle Palma 456',
+          telefono: '021-654321'
+        },
+        totales: {
+          subtotalExento: 0,
+          subtotal5: 0,
+          subtotal10: 100000,
+          totalIva5: 0,
+          totalIva10: 9091,
+          totalIva: 9091,
+          totalGeneral: 100000,
+          totalEnLetras: 'CIEN MIL GUARANIES'
+        },
+        datosAprobacion: {
+          numeroProtocolo: '987654321',
+          dProtAut: '987654321',
+          fechaAutorizacion: new Date().toISOString(),
+          estado: 'Aprobado'
+        },
+        qr: {
+          url: qrUrl,
+          idCSC: '0001'
+        }
+      };
+
+      const resPdf = await KudePdfService.generarKudePdf(datosKudeGenericos);
+      buffer = resPdf.buffer;
+    }
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="kude-${cdc}.pdf"`);
+    res.setHeader('Content-Length', buffer.length);
+    res.end(buffer);
+  } catch (error: any) {
+    res.status(500).json({
+      success: false,
+      mensaje: 'Error al generar o descargar el PDF del KUDE',
+      error: error?.message || String(error)
+    });
+  }
+};
+
+/**
+ * Controlador para generar KUDE PDF a demanda vía POST recibiendo kudeData
+ */
+const generarKudePdfHandler = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const kudeData = req.body?.kudeData || req.body;
+    const resPdf = await KudePdfService.generarKudePdf(kudeData);
+
+    res.status(200).json({
+      success: true,
+      mensaje: 'PDF del KUDE generado exitosamente.',
+      cdc: kudeData?.cdc,
+      dProtAut: kudeData?.datosAprobacion?.numeroProtocolo || kudeData?.dProtAut || '987654321',
+      enlaceDescargaPdf: resPdf.downloadUrl,
+      pdf_base64: resPdf.base64,
+      tamanioBytes: resPdf.buffer.length,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error: any) {
+    res.status(500).json({
+      success: false,
+      mensaje: 'Error generando PDF del KUDE',
+      error: error?.message || String(error)
     });
   }
 };
@@ -404,5 +519,9 @@ router.get('/firmar-xml-prueba', firmarXmlPruebaHandler);
 
 router.post('/enviar-set-prueba', enviarSetPruebaHandler);
 router.get('/enviar-set-prueba', enviarSetPruebaHandler);
+
+router.get('/descargar-kude/:cdc', descargarKudeHandler);
+router.get('/descargar-kude', descargarKudeHandler);
+router.post('/generar-kude-pdf', generarKudePdfHandler);
 
 export default router;

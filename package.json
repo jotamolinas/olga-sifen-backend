@@ -19,7 +19,8 @@
     "facturacionelectronicapy-setapi": "^1.0.0",
     "facturacionelectronicapy-xmlgen": "^1.0.0",
     "facturacionelectronicapy-xmlsign": "^1.0.0",
-    "fast-xml-parser": "^4.5.1"
+    "fast-xml-parser": "^4.5.1",
+    "pdfmake": "^0.2.18"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",
