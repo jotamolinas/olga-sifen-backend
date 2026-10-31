@@ -19,6 +19,22 @@ export interface GenerarDocumentoResponse {
   xml: string;
 }
 
+export interface EnviarSetResponse {
+  success: boolean;
+  ambiente: 'test' | 'prod';
+  cdc: string;
+  idEnvio: number;
+  codigoRespuesta?: string;
+  mensajeRespuesta?: string;
+  fechaProcesamiento?: string;
+  numeroTicket?: string;
+  numeroProtocolo?: string;
+  estadoDocumento?: string;
+  detallesSifen?: any;
+  respuestaRaw?: any;
+  xml_firmado?: string;
+}
+
 /**
  * Servicio central para la integración con las librerías oficiales de Facturación Electrónica SIFEN (Paraguay).
  * Encapsula:
@@ -115,6 +131,83 @@ export class SifenCoreService {
       return xmlConQR;
     } catch (error: any) {
       throw new Error(`Error al generar código QR para el documento SIFEN: ${error.message || error}`);
+    }
+  }
+
+  /**
+   * Transmite un Documento Electrónico (DE) firmado a la SET / SIFEN mediante facturacionelectronicapy-setapi.
+   * Encapsula la llamada a `setApi.recibe` con túnel mTLS y parsea la respuesta estructurada de SIFEN.
+   * 
+   * @param xmlFirmado Cadena XML del Documento Electrónico ya firmado
+   * @param certPath Ruta al certificado digital (.p12 o .pem)
+   * @param password Contraseña del certificado digital
+   * @param env Entorno de destino ('test' o 'prod', por defecto 'test')
+   * @param id Identificador numérico del envío (opcional)
+   */
+  public static async transmitirDocumentoElectronico(
+    xmlFirmado: string,
+    certPath: string,
+    password: string,
+    env: 'test' | 'prod' = 'test',
+    id?: number
+  ): Promise<EnviarSetResponse> {
+    inicializarMonkeyPatchXmlSign();
+
+    const idEnvio = id || Math.floor(Date.now() / 1000);
+
+    // Extraer CDC del XML firmado
+    const matchCdc = xmlFirmado.match(/<DE\s+[^>]*Id="([0-9]{44})"/i) || xmlFirmado.match(/Id="([0-9]{44})"/i);
+    const cdc = matchCdc ? matchCdc[1] : '';
+
+    try {
+      console.log(`📡 Transmitiendo DE a la SET [Env: ${env}] [ID: ${idEnvio}] [CDC: ${cdc}]...`);
+
+      const setConfig = {
+        debug: true,
+        timeout: 45000
+      };
+
+      const respuestaSet = await setApiLib.recibe(
+        idEnvio,
+        xmlFirmado,
+        env,
+        certPath,
+        password,
+        setConfig
+      );
+
+      console.log('📥 Respuesta recibida de SIFEN:', JSON.stringify(respuestaSet, null, 2));
+
+      // Extraer datos del cuerpo de respuesta SOAP
+      const bodyData = respuestaSet?.rRetEnviDe || respuestaSet?.['ns2:rRetEnviDe'] || respuestaSet;
+      const resProc = bodyData?.rProtDe?.gResProc || bodyData?.gResProc;
+
+      const dCodRes = bodyData?.dCodRes || resProc?.dCodRes || bodyData?.dCodResLot || 'DESCONOCIDO';
+      const dMsgRes = bodyData?.dMsgRes || resProc?.dMsgRes || bodyData?.dMsgResLot || 'Sin mensaje de SIFEN';
+      const dFecProc = bodyData?.dFecProc || bodyData?.rProtDe?.dFecProc;
+      const dProtAut = bodyData?.rProtDe?.dProtAut || bodyData?.dProtAut || bodyData?.dId;
+      const dEstRes = resProc?.dEstRes || (dCodRes === '0300' ? 'Aprobado' : (String(dCodRes).startsWith('0') ? 'Procesado' : 'Rechazado'));
+
+      const isAprobado = dCodRes === '0300' || dEstRes === 'Aprobado';
+
+      return {
+        success: isAprobado,
+        ambiente: env,
+        cdc,
+        idEnvio,
+        codigoRespuesta: dCodRes,
+        mensajeRespuesta: dMsgRes,
+        fechaProcesamiento: dFecProc,
+        numeroTicket: dProtAut ? String(dProtAut) : undefined,
+        numeroProtocolo: dProtAut ? String(dProtAut) : undefined,
+        estadoDocumento: dEstRes,
+        detallesSifen: resProc || bodyData,
+        respuestaRaw: respuestaSet,
+        xml_firmado: xmlFirmado
+      };
+    } catch (error: any) {
+      console.error('❌ Error de comunicación con la SET/SIFEN:', error?.message || error);
+      throw error;
     }
   }
 

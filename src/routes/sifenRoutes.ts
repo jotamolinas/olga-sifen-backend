@@ -279,6 +279,106 @@ const firmarXmlPruebaHandler = async (req: Request, res: Response): Promise<void
 };
 
 /**
+ * Controlador para la transmisión de Documentos Electrónicos (DE) de prueba a la SET / SIFEN.
+ * 
+ * 1. Genera o toma el XML (req.body.xml).
+ * 2. Si no viene firmado, aplica la firma digital con el certificado localizado.
+ * 3. Se conecta al endpoint oficial de prueba de la SET (https://sifen-test.set.gov.py/de/ws/sync/recibe.wsdl)
+ *    estableciendo el túnel mTLS mediante facturacionelectronicapy-setapi y nuestros certificados PEM nativos.
+ * 4. Devuelve la respuesta estructurada de SIFEN: estado, dCodRes, dMsgRes, número de ticket/protocolo.
+ */
+const enviarSetPruebaHandler = async (req: Request, res: Response): Promise<void> => {
+  let cdc = '';
+  let xmlFirmado = '';
+  const sifenEnv: 'test' | 'prod' = ((req.body?.env || process.env.SIFEN_ENV || 'test').toLowerCase() === 'prod') ? 'prod' : 'test';
+
+  try {
+    const inputBody = req.body || {};
+
+    // 1. Localizar archivo de certificado digital (.p12 o .pem)
+    const infoCert = CertificadoService.localizarCertificadoYPassword(inputBody.certPath, inputBody.password);
+    const rutaParaFirma = infoCert.ruta || infoCert.rutaPem;
+
+    if (!infoCert.existe || !rutaParaFirma) {
+      res.status(200).json({
+        success: false,
+        codigo: 'CERTIFICADO_NO_ENCONTRADO',
+        mensaje: 'No se encontró el archivo de certificado digital (.p12, .pem) en el servidor para transmitir a SIFEN.',
+        rutasBuscadas: infoCert.rutasBuscadas,
+        timestamp: new Date().toISOString()
+      });
+      return;
+    }
+
+    // 2. Obtener o generar XML y firmarlo
+    if (inputBody.xml && typeof inputBody.xml === 'string' && inputBody.xml.includes('Signature')) {
+      // El XML ya viene firmado
+      xmlFirmado = inputBody.xml;
+      const matchCdc = xmlFirmado.match(/<DE\s+[^>]*Id="([0-9]{44})"/i) || xmlFirmado.match(/Id="([0-9]{44})"/i);
+      cdc = matchCdc ? matchCdc[1] : '';
+    } else {
+      let xmlBase = '';
+      if (inputBody.xml && typeof inputBody.xml === 'string' && inputBody.xml.includes('<DE')) {
+        xmlBase = inputBody.xml;
+        const matchCdc = xmlBase.match(/<DE\s+[^>]*Id="([0-9]{44})"/i) || xmlBase.match(/Id="([0-9]{44})"/i);
+        cdc = matchCdc ? matchCdc[1] : '';
+      } else {
+        const { params, data } = obtenerDatosPruebaSifenV150(inputBody);
+        const resGen = await SifenCoreService.generarDocumentoElectronico(params, data);
+        xmlBase = resGen.xml;
+        cdc = resGen.cdc;
+      }
+
+      // Firmar el documento digitalmente
+      xmlFirmado = await SifenCoreService.firmarDocumento(xmlBase, rutaParaFirma, infoCert.password);
+    }
+
+    // 3. Transmitir el documento a SIFEN (SET) mediante facturacionelectronicapy-setapi
+    const idEnvio = inputBody.id ? Number(inputBody.id) : Math.floor(Date.now() / 1000);
+    const resultadoTransmision = await SifenCoreService.transmitirDocumentoElectronico(
+      xmlFirmado,
+      rutaParaFirma,
+      infoCert.password,
+      sifenEnv,
+      idEnvio
+    );
+
+    res.status(200).json({
+      success: resultadoTransmision.success,
+      mensaje: resultadoTransmision.success
+        ? 'Documento Electrónico transmitido y procesado exitosamente por la SET/SIFEN.'
+        : `La SET/SIFEN respondió con código ${resultadoTransmision.codigoRespuesta}: ${resultadoTransmision.mensajeRespuesta}`,
+      ambiente: sifenEnv,
+      cdc: resultadoTransmision.cdc || cdc,
+      transmision: {
+        idEnvio: resultadoTransmision.idEnvio,
+        codigoRespuesta: resultadoTransmision.codigoRespuesta,
+        mensajeRespuesta: resultadoTransmision.mensajeRespuesta,
+        fechaProcesamiento: resultadoTransmision.fechaProcesamiento,
+        numeroTicket: resultadoTransmision.numeroTicket,
+        numeroProtocolo: resultadoTransmision.numeroProtocolo,
+        estado: resultadoTransmision.estadoDocumento
+      },
+      detallesSifen: resultadoTransmision.detallesSifen,
+      xml_firmado: xmlFirmado,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error: any) {
+    res.status(200).json({
+      success: false,
+      codigo: 'ERROR_TRANSMISION_SET',
+      mensaje: 'Ocurrió un error al transmitir el Documento Electrónico a la SET/SIFEN.',
+      errorDetalle: error.message || String(error),
+      ambiente: sifenEnv,
+      cdc: cdc || undefined,
+      xml_firmado: xmlFirmado || undefined,
+      sugerencia: 'Verifique si el certificado digital de prueba está registrado en el ambiente test de la DNIT/SET y que el endpoint https://sifen-test.set.gov.py sea accesible.',
+      timestamp: new Date().toISOString()
+    });
+  }
+};
+
+/**
  * Endpoints registrados
  */
 router.post('/generar-xml-prueba', generarXmlPruebaHandler);
@@ -286,5 +386,8 @@ router.get('/generar-xml-prueba', generarXmlPruebaHandler);
 
 router.post('/firmar-xml-prueba', firmarXmlPruebaHandler);
 router.get('/firmar-xml-prueba', firmarXmlPruebaHandler);
+
+router.post('/enviar-set-prueba', enviarSetPruebaHandler);
+router.get('/enviar-set-prueba', enviarSetPruebaHandler);
 
 export default router;

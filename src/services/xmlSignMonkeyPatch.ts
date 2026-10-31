@@ -8,6 +8,7 @@ let isPatchApplied = false;
 export interface PemCertData {
   keyContent: string;
   certB64: string;
+  certFullPem: string;
   keyPath?: string;
   certPath?: string;
 }
@@ -118,6 +119,7 @@ export function obtenerArchivosPem(): PemCertData | null {
     cachedPemData = {
       keyContent,
       certB64,
+      certFullPem: certContent,
       keyPath: foundKeyPath || undefined,
       certPath: foundCertPath || undefined
     };
@@ -129,9 +131,13 @@ export function obtenerArchivosPem(): PemCertData | null {
 }
 
 /**
- * Inicializa de forma definitiva el Monkey Patch en runtime para facturacionelectronicapy-xmlsign
- * y node-forge, garantizando que NUNCA se intente decodificar el ASN.1 de .p12 con node-forge
- * y que XMLDsigNode devuelva siempre el certificado y clave PEM como cadenas de texto no nulas.
+ * Inicializa de forma definitiva el Monkey Patch en runtime para facturacionelectronicapy-xmlsign,
+ * facturacionelectronicapy-setapi y node-forge.
+ * 
+ * Garantiza que:
+ * 1. NUNCA se intente decodificar el ASN.1 de .p12 con node-forge.
+ * 2. XMLDsigNode devuelva siempre el certificado y clave PEM como strings válidos.
+ * 3. SET.prototype.abrir en setapi configure el agente HTTPS con los certificados PEM para mTLS.
  */
 export function inicializarMonkeyPatchXmlSign(): void {
   if (isPatchApplied) {
@@ -139,7 +145,7 @@ export function inicializarMonkeyPatchXmlSign(): void {
   }
 
   try {
-    console.log('🔧 Aplicando Runtime Monkey Patch para facturacionelectronicapy-xmlsign...');
+    console.log('🔧 Aplicando Runtime Monkey Patch para facturacionelectronicapy-xmlsign y setapi...');
 
     // 1. Desactivar colapsos en node-forge ASN.1 y PKCS#12
     try {
@@ -179,7 +185,7 @@ export function inicializarMonkeyPatchXmlSign(): void {
       }
     } catch (_) {}
 
-    // 2. Localizar directorio real de la librería facturacionelectronicapy-xmlsign
+    // 2. Localizar directorio real de facturacionelectronicapy-xmlsign
     let xmlsignDir = '';
     try {
       xmlsignDir = path.dirname(require.resolve('facturacionelectronicapy-xmlsign'));
@@ -235,7 +241,7 @@ export function inicializarMonkeyPatchXmlSign(): void {
       console.warn('⚠️ No se pudo parchear XMLDsigNode:', err?.message || err);
     }
 
-    // 4. Parchear clases PKCS12 y token si existen
+    // 4. Parchear clases PKCS12 y token en xmlsign si existen
     const moduleFiles = ['PKCS12.js', 'token.js', 'PKCS12', 'token'];
     for (const f of moduleFiles) {
       try {
@@ -290,7 +296,7 @@ export function inicializarMonkeyPatchXmlSign(): void {
       } catch (_) {}
     }
 
-    // 5. Parchear XMLDsig.js
+    // 5. Parchear XMLDsig.js en xmlsign
     try {
       const xmlDsigPath = path.join(xmlsignDir, 'XMLDsig.js');
       const xmlDsigMod = require(xmlDsigPath);
@@ -330,8 +336,72 @@ export function inicializarMonkeyPatchXmlSign(): void {
       }
     } catch (_) {}
 
+    // 7. Parchear facturacionelectronicapy-setapi para mTLS con certificados PEM
+    try {
+      let setApiDir = '';
+      try {
+        setApiDir = path.dirname(require.resolve('facturacionelectronicapy-setapi'));
+      } catch (_) {
+        setApiDir = path.resolve(process.cwd(), 'node_modules', 'facturacionelectronicapy-setapi', 'dist');
+      }
+
+      // A. Parchear SET.js (método abrir para inyectar cert y key en https.Agent)
+      try {
+        const setMod = require(path.join(setApiDir, 'SET'));
+        const setInstance = setMod?.default || setMod;
+        const SetClass = setInstance?.constructor;
+        const setProto = SetClass?.prototype;
+
+        const setTargets = [setInstance, setProto].filter(Boolean);
+        for (const t of setTargets) {
+          t.abrir = function (_certificado: any, _passphase: any) {
+            const pem = obtenerArchivosPem();
+            if (pem) {
+              this.cert = pem.certFullPem;
+              this.key = pem.keyContent;
+            }
+          };
+        }
+        console.log('✅ Prototipo de SET en setapi parcheado para mTLS con certificados PEM.');
+      } catch (err: any) {
+        console.warn('⚠️ No se pudo parchear SET en setapi:', err?.message || err);
+      }
+
+      // B. Parchear PKCS12.js en setapi
+      try {
+        const pkcs12SetMod = require(path.join(setApiDir, 'PKCS12'));
+        const pkcs12SetInstance = pkcs12SetMod?.default || pkcs12SetMod;
+        const Pkcs12SetClass = pkcs12SetInstance?.constructor;
+        const pkcs12SetProto = Pkcs12SetClass?.prototype;
+
+        const pkcs12SetTargets = [pkcs12SetInstance, pkcs12SetProto].filter(Boolean);
+        for (const t of pkcs12SetTargets) {
+          t.openCertificate = function (_file: any) {
+            this.p12 = undefined;
+            this.p12Asn1 = undefined;
+          };
+          t.openFile = function (_file: any, _passphase: any) {
+            this.openCertificate(_file);
+          };
+          t.clean = function () {
+            this.p12 = undefined;
+          };
+          t.getCertificate = function () {
+            const pem = obtenerArchivosPem();
+            return pem ? pem.certFullPem : '';
+          };
+          t.getPrivateKey = function () {
+            const pem = obtenerArchivosPem();
+            return pem ? pem.keyContent : '';
+          };
+        }
+      } catch (_) {}
+    } catch (err: any) {
+      console.warn('⚠️ Error al configurar parche para setapi:', err?.message || err);
+    }
+
     isPatchApplied = true;
-    console.log('✅ Runtime Monkey Patch aplicado con éxito total en todos los prototipos.');
+    console.log('✅ Runtime Monkey Patch aplicado con éxito total en facturacionelectronicapy-xmlsign y setapi.');
   } catch (err: any) {
     console.error('⚠️ Error al aplicar Runtime Monkey Patch:', err?.message || err);
   }

@@ -58,6 +58,7 @@ app.listen(PORT, () => {
   console.log(`📡 Entorno: ${process.env.NODE_ENV || 'development'}`);
   console.log(`🔒 SIFEN Module Status: ${process.env.ENABLE_SIFEN_MODULE !== 'false' ? 'ENABLED' : 'DISABLED'}`);
   console.log(`🧪 Test Endpoint: http://localhost:${PORT}/api/sifen/test-conexion`);
+  console.log(`🚀 Envío SET Endpoint: http://localhost:${PORT}/api/sifen/enviar-set-prueba`);
   console.log(`====================================================`);
 });
 
