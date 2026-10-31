@@ -151,6 +151,10 @@ const generarXmlPruebaHandler = async (req: Request, res: Response): Promise<voi
           departamento: params.establecimientos[0]?.departamentoDescripcion,
           ciudad: params.establecimientos[0]?.ciudadDescripcion
         },
+        factura: {
+          presencia: data.factura?.presencia,
+          fechaEnvio: data.factura?.fechaEnvio
+        },
         cliente: {
           tipoOperacion: data.cliente?.tipoOperacion,
           documento: `CI ${data.cliente?.numeroDocumento}`,

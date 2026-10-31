@@ -3,6 +3,7 @@
  * Estructurado específicamente con los catálogos y requisitos oficiales de la DNIT / SET:
  * - Parámetros de emisor (params) con actividades económicas y establecimientos geográficamente correctos.
  * - Datos variables (data) para Factura Electrónica Notarial (Escribanía).
+ * - Nodo explícito data.factura con presencia: 1 (operación presencial) y fechaEnvio.
  * - Cliente no contribuyente válido (Cédula de Identidad, consumidor final B2C).
  * - Condición contado con desglose de entrega en efectivo.
  * - Ítems con tasa IVA 10% y el parámetro obligatorio `ivaProporcion` (100%).
@@ -139,7 +140,13 @@ export function obtenerDatosPruebaSifenV150(inputBody: any = {}): SifenParamsAnd
     ]
   };
 
-  // 5. Factura Electrónica (data)
+  // 5. Nodo específico de factura exigido en v150 por facturacionelectronicapy-xmlgen
+  const defaultFactura = {
+    presencia: 1,      // 1: Operación presencial
+    fechaEnvio: fechaHoy
+  };
+
+  // 6. Factura Electrónica (data)
   const defaultData = {
     tipoDocumento: 1, // 1: Factura Electrónica
     establecimiento: '001',
@@ -152,6 +159,8 @@ export function obtenerDatosPruebaSifenV150(inputBody: any = {}): SifenParamsAnd
     tipoTransaccion: 1, // 1: Venta de bienes / servicios
     tipoImpuesto: 1,    // 1: IVA
     moneda: 'PYG',
+    presencia: 1,       // Operación presencial (directo en data)
+    factura: defaultFactura, // Nodo data.factura explícito para v150
     cliente: defaultClienteNoContribuyente,
     condicion: defaultCondicion,
     items: defaultItems
@@ -181,11 +190,20 @@ export function obtenerDatosPruebaSifenV150(inputBody: any = {}): SifenParamsAnd
       : defaultParams.establecimientos
   };
 
-  // Asegurar cliente, condicion e items con ivaProporcion en data
+  // Asegurar cliente, condicion, factura e items con ivaProporcion en data
   const userCliente = userData.cliente || inputBody.cliente || {};
   const mergedCliente = {
     ...defaultClienteNoContribuyente,
     ...userCliente
+  };
+
+  // Asegurar nodo data.factura explícito con presencia: 1
+  const userFactura = userData.factura || inputBody.factura || {};
+  const mergedFactura = {
+    ...defaultFactura,
+    ...userFactura,
+    presencia: userFactura.presencia !== undefined ? userFactura.presencia : 1,
+    fechaEnvio: userFactura.fechaEnvio || defaultFactura.fechaEnvio
   };
 
   // Asegurar que cada ítem tenga ivaProporcion y campos geográficos
@@ -221,6 +239,8 @@ export function obtenerDatosPruebaSifenV150(inputBody: any = {}): SifenParamsAnd
     ...defaultData,
     ...userData,
     fecha: userData.fecha || defaultData.fecha,
+    presencia: userData.presencia !== undefined ? userData.presencia : 1,
+    factura: mergedFactura, // Nodo data.factura explícito y completo
     cliente: mergedCliente,
     condicion: userData.condicion || inputBody.condicion || defaultCondicion,
     items: mergedItems
