@@ -19,10 +19,10 @@ try {
   const subj = '/C=PY/ST=Central/L=Asuncion/O=SIFEN Test/OU=Facturacion Electronica/CN=SIFEN Test RSA 2048';
   execSync(`openssl req -new -x509 -key "${keyPath}" -out "${certPemPath}" -days 730 -subj "${subj}"`, { stdio: 'inherit' });
 
-  // 3. Empaquetar a PKCS#12 con cifrado clásico PBE-SHA1-3DES (compatible con node-forge)
-  console.log('3. Empaquetando contenedor PKCS#12 compatible (PBE-SHA1-3DES)...');
+  // 3. Empaquetar a PKCS#12 con cifrado clásico PBE-SHA1-3DES (compatible nativo con node-forge)
+  console.log('3. Empaquetando contenedor PKCS#12 compatible nativo (PBE-SHA1-3DES)...');
   execSync(
-    `openssl pkcs12 -export -out "${p12Path}" -inkey "${keyPath}" -in "${certPemPath}" -passout pass:test1234 -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1 -nomaciter`,
+    `openssl pkcs12 -export -out "${p12Path}" -inkey "${keyPath}" -in "${certPemPath}" -passout pass:test1234 -legacy -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1`,
     { stdio: 'inherit' }
   );
 

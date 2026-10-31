@@ -5,18 +5,17 @@ WORKDIR /app
 RUN apk add --no-cache openssl
 
 COPY package*.json tsconfig.json ./
-COPY scripts ./scripts
 RUN npm install
 
 COPY src ./src
 RUN npm run build
 
-# Generar certificado RSA 2048 bits con cifrado clásico compatible con node-forge
+# Generar certificado RSA 2048 bits con cifrado clásico y robusto para compatibilidad nativa con node-forge
 RUN mkdir -p certs && \
     openssl req -x509 -newkey rsa:2048 -keyout certs/key.pem -out certs/cert.pem -days 730 -nodes \
       -subj "/C=PY/ST=Central/L=Asuncion/O=SIFEN Test/OU=Facturacion Electronica/CN=SIFEN Test RSA 2048" && \
     openssl pkcs12 -export -out certs/certificado.p12 -inkey certs/key.pem -in certs/cert.pem \
-      -passout pass:test1234 -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1 -nomaciter && \
+      -passout pass:test1234 -legacy -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1 && \
     rm certs/key.pem certs/cert.pem
 
 FROM node:20-alpine AS runner
@@ -31,7 +30,6 @@ ENV CERT_P12_PASSWORD=test1234
 ENV NODE_OPTIONS="--openssl-legacy-provider"
 
 COPY package*.json ./
-COPY scripts ./scripts
 RUN npm install --only=production
 
 COPY --from=builder /app/dist ./dist
@@ -40,5 +38,6 @@ COPY --from=builder /app/certs ./certs
 EXPOSE 8080
 
 CMD ["node", "dist/server.js"]
+
 
 

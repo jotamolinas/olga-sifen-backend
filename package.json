@@ -8,8 +8,7 @@
     "start": "node dist/server.js",
     "dev": "tsx watch src/server.ts",
     "demo:cert": "tsx src/examples/demoCertificado.ts",
-    "test:cert": "node test-certificados.js",
-    "postinstall": "node scripts/patch-node-forge.js"
+    "test:cert": "node test-certificados.js"
   },
   "dependencies": {
     "axios": "^1.7.9",
