@@ -12,7 +12,7 @@ function aplicarParcheCriptografico() {
   try {
     const forge = require('node-forge');
 
-    if (forge && forge.util && forge.util.ByteStringBuffer) {
+    if (forge && forge.util && forge.util.ByteStringBuffer && forge.util.ByteStringBuffer.prototype) {
       const origGetInt = forge.util.ByteStringBuffer.prototype.getInt;
       forge.util.ByteStringBuffer.prototype.getInt = function (numOfBits) {
         const numOfBytes = numOfBits / 8;
@@ -40,6 +40,8 @@ function aplicarParcheCriptografico() {
   } catch (e) {}
 }
 
-aplicarParcheCriptografico();
+try {
+  aplicarParcheCriptografico();
+} catch (e) {}
 
 module.exports = { aplicarParcheCriptografico };

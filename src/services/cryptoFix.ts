@@ -1,17 +1,14 @@
 import crypto from 'crypto';
+import { createRequire } from 'module';
 
 /**
  * Parche criptográfico y configuración de seguridad para compatibilidad con certificados .p12
  * en Node.js y node-forge.
  * 
- * Resuelve:
- * 1. "Only 8, 16, 24, or 32 bits supported: 40" en node-forge ByteStringBuffer al procesar
- *    longitudes ASN.1 de 5 bytes (40 bits) o claves derivadas PBES1/PBE-RC2-40.
- * 2. Deshabilita restricciones estrictas en node-forge pkcs12FromAsn1 (strict: false).
- * 3. Habilita compatibilidad con proveedores y algoritmos de cifrado legacy/AES en Node.js.
+ * Diseñado a prueba de fallos: Cualquier excepción interna es capturada silenciosamente
+ * para garantizar que el servidor Express arranque sin interrupciones.
  */
 export function aplicarParcheCriptografico(): void {
-  // 1. Configurar opciones globales de cifrado en Node.js
   try {
     if ((crypto as any).setDefaultCipherOptions) {
       (crypto as any).setDefaultCipherOptions({
@@ -19,15 +16,15 @@ export function aplicarParcheCriptografico(): void {
       });
     }
   } catch {
-    // Ignorar si no está soportado en la versión actual de Node
+    // No bloqueante
   }
 
-  // 2. Parche en memoria para node-forge
   try {
+    const require = createRequire(import.meta.url);
     const forge = require('node-forge');
 
-    // Parche para ByteStringBuffer.prototype.getInt (soporta 40, 48, 56 y 64 bits)
-    if (forge?.util?.ByteStringBuffer) {
+    // Parche para ByteStringBuffer.prototype.getInt (soporta longitudes de 40 bits en adelante)
+    if (forge?.util?.ByteStringBuffer?.prototype) {
       const origGetInt = forge.util.ByteStringBuffer.prototype.getInt;
       forge.util.ByteStringBuffer.prototype.getInt = function (numOfBits: number) {
         const numOfBytes = numOfBits / 8;
@@ -46,7 +43,6 @@ export function aplicarParcheCriptografico(): void {
     if (forge?.pkcs12?.pkcs12FromAsn1) {
       const origPkcs12FromAsn1 = forge.pkcs12.pkcs12FromAsn1;
       forge.pkcs12.pkcs12FromAsn1 = function (asn1: any, strict: any, password: any) {
-        // Si strict es string, se pasó como (asn1, password)
         if (typeof strict === 'string') {
           password = strict;
           strict = false;
@@ -55,9 +51,13 @@ export function aplicarParcheCriptografico(): void {
       };
     }
   } catch {
-    // node-forge se cargará dinámicamente cuando lo invoque facturacionelectronicapy-xmlsign
+    // No bloqueante: node-forge puede no estar disponible o usar imports diferentes
   }
 }
 
-// Ejecutar inmediatamente al importar
-aplicarParcheCriptografico();
+// Ejecución segura no bloqueante
+try {
+  aplicarParcheCriptografico();
+} catch {
+  // Ignorar cualquier fallo durante la carga inicial del módulo
+}
