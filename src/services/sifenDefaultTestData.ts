@@ -3,7 +3,8 @@
  * Cumple con todos los requerimientos técnicos y de esquema de la DNIT / SET:
  * - Emisor (params): Actividades económicas (69101), timbrado y establecimientos con códigos oficiales.
  * - Ubicación geográfica paraguaya correcta: Capital (Dpto 1, Distrito 1, Ciudad 1 - ASUNCION).
- * - Fechas de emisión/firma con desfase controlado (5 minutos atrás) para evitar errores de fecha futura.
+ * - Desfase temporal estricto: La fecha de la factura (fecha / dFeEmiDE) es exactamente 10 minutos
+ *   antes que la fecha de envío/firma (fechaEnvio / fecFirma). Nunca comparten la misma marca de tiempo.
  * - Cliente no contribuyente válido: Tipo operación 2 (B2C), CI paraguaya (1234567).
  * - Nodo data.factura explícito con presencia: 1 (operación presencial) y fechaEnvio.
  * - Condición: Contado (tipo: 1) con desglose en efectivo.
@@ -18,12 +19,17 @@ export interface SifenParamsAndData {
 export function obtenerDatosPruebaSifenV150(inputBody: any = {}): SifenParamsAndData {
   const now = new Date();
   
-  // Desfase temporal seguro: emisión 5 minutos antes para asegurar que nunca sea posterior a la firma ni esté en el futuro
-  const fechaEmisionDate = new Date(now.getTime() - 5 * 60 * 1000);
-  const fechaIso = fechaEmisionDate.toISOString().split('.')[0]; // 'YYYY-MM-DDTHH:mm:ss'
-  const fechaSoloDia = fechaEmisionDate.toISOString().split('T')[0]; // 'YYYY-MM-DD'
+  // 1. Marca de tiempo actual de Envío / Firma digital (fechaEnvio / fecFirma)
+  const fechaEnvioFirmaDate = now;
+  const fechaEnvioIso = fechaEnvioFirmaDate.toISOString().split('.')[0]; // 'YYYY-MM-DDTHH:mm:ss'
+  const fechaEnvioSoloDia = fechaEnvioFirmaDate.toISOString().split('T')[0]; // 'YYYY-MM-DD'
 
-  // 1. Parámetros estáticos del Contribuyente Emisor (Escribanía Notarial)
+  // 2. Marca de tiempo de la Factura / Emisión: EXACTAMENTE 10 minutos antes (dFeEmiDE / fecha)
+  const fechaFacturaDate = new Date(fechaEnvioFirmaDate.getTime() - 10 * 60 * 1000);
+  const fechaFacturaIso = fechaFacturaDate.toISOString().split('.')[0]; // 'YYYY-MM-DDTHH:mm:ss'
+  const fechaFacturaSoloDia = fechaFacturaDate.toISOString().split('T')[0]; // 'YYYY-MM-DD'
+
+  // Parámetros estáticos del Contribuyente Emisor (Escribanía Notarial)
   const defaultParams = {
     version: 150,
     sincronico: 'S',
@@ -61,7 +67,7 @@ export function obtenerDatosPruebaSifenV150(inputBody: any = {}): SifenParamsAnd
     ]
   };
 
-  // 2. Cliente No Contribuyente (Consumidor Final B2C con Cédula de Identidad)
+  // Cliente No Contribuyente (Consumidor Final B2C con Cédula de Identidad)
   const defaultClienteNoContribuyente = {
     contribuyente: false,
     tipoOperacion: 2, // 2: B2C (Consumidor final)
@@ -84,7 +90,7 @@ export function obtenerDatosPruebaSifenV150(inputBody: any = {}): SifenParamsAnd
     email: 'juan.perez.cliente@gmail.com'
   };
 
-  // 3. Ítems con ivaProporcion: 100 para servicios notariales (Honorarios + Certificación)
+  // Ítems notariales con ivaProporcion: 100 obligatorio en v150
   const defaultItems = [
     {
       codigo: 'HON-001',
@@ -106,7 +112,7 @@ export function obtenerDatosPruebaSifenV150(inputBody: any = {}): SifenParamsAnd
       cdcAnticipo: 0,
       ivaTipo: 1,        // 1: Gravado IVA
       ivaBase: 100,      // Retrocompatibilidad
-      ivaProporcion: 100,// Exigido y validado en v150 (proporción gravada 100%)
+      ivaProporcion: 100,// Exigido y validado en v150
       iva: 10            // Tasa IVA 10%
     },
     {
@@ -134,7 +140,7 @@ export function obtenerDatosPruebaSifenV150(inputBody: any = {}): SifenParamsAnd
     }
   ];
 
-  // 4. Condición de pago (Contado en Efectivo)
+  // Condición de pago (Contado en Efectivo)
   const defaultCondicion = {
     tipo: 1, // 1: Contado
     entregas: [
@@ -147,26 +153,30 @@ export function obtenerDatosPruebaSifenV150(inputBody: any = {}): SifenParamsAnd
     ]
   };
 
-  // 5. Nodo específico data.factura exigido en v150
+  // Nodo específico data.factura exigido en v150
+  // La fecha de envío/firma es el tiempo actual
   const defaultFactura = {
-    presencia: 1,       // 1: Operación presencial
-    fechaEnvio: fechaSoloDia
+    presencia: 1,           // 1: Operación presencial
+    fechaEnvio: fechaEnvioIso
   };
 
-  // 6. Factura Electrónica (data)
+  // Factura Electrónica (data):
+  // La fecha de la factura es EXACTAMENTE 10 minutos antes que la fecha de envío/firma
   const defaultData = {
-    tipoDocumento: 1,   // 1: Factura Electrónica
+    tipoDocumento: 1,       // 1: Factura Electrónica
     establecimiento: '001',
     punto: '001',
     numero: 1,
     descripcion: 'Servicios Notariales y Protocolización',
     observacion: 'Facturación Electrónica SIFEN v150',
-    fecha: fechaIso,    // Fecha con desfase temporal controlado
-    tipoEmision: 1,     // 1: Normal
-    tipoTransaccion: 1, // 1: Venta de bienes / servicios
-    tipoImpuesto: 1,    // 1: IVA
+    fecha: fechaFacturaIso, // Exactamente 10 minutos antes que fechaEnvio / fecFirma
+    dFeEmiDE: fechaFacturaIso,
+    fecFirma: fechaEnvioIso, // Marca de firma actual
+    tipoEmision: 1,         // 1: Normal
+    tipoTransaccion: 1,     // 1: Venta de bienes / servicios
+    tipoImpuesto: 1,        // 1: IVA
     moneda: 'PYG',
-    presencia: 1,       // 1: Operación presencial
+    presencia: 1,           // 1: Operación presencial
     factura: defaultFactura,
     cliente: defaultClienteNoContribuyente,
     condicion: defaultCondicion,
@@ -210,6 +220,15 @@ export function obtenerDatosPruebaSifenV150(inputBody: any = {}): SifenParamsAnd
     fechaEnvio: userFactura.fechaEnvio || defaultFactura.fechaEnvio
   };
 
+  // Garantizar que la fecha de la factura NUNCA sea idéntica a la fecha de envío/firma
+  let fechaFacturaFinal = userData.fecha || inputBody.fecha || defaultData.fecha;
+  const fechaEnvioFinal = mergedFactura.fechaEnvio;
+
+  if (fechaFacturaFinal === fechaEnvioFinal) {
+    const envioDate = new Date(fechaEnvioFinal.includes('T') ? fechaEnvioFinal : `${fechaEnvioFinal}T12:00:00`);
+    fechaFacturaFinal = new Date(envioDate.getTime() - 10 * 60 * 1000).toISOString().split('.')[0];
+  }
+
   const userItems = (userData.items && userData.items.length > 0)
     ? userData.items
     : (inputBody.items && inputBody.items.length > 0 ? inputBody.items : defaultItems);
@@ -234,14 +253,16 @@ export function obtenerDatosPruebaSifenV150(inputBody: any = {}): SifenParamsAnd
     cdcAnticipo: item.cdcAnticipo || 0,
     ivaTipo: item.ivaTipo || 1,
     ivaBase: item.ivaBase !== undefined ? item.ivaBase : 100,
-    ivaProporcion: item.ivaProporcion !== undefined ? item.ivaProporcion : 100, // Garantizado 100
+    ivaProporcion: item.ivaProporcion !== undefined ? item.ivaProporcion : 100,
     iva: item.iva !== undefined ? item.iva : 10
   }));
 
   const mergedData = {
     ...defaultData,
     ...userData,
-    fecha: userData.fecha || defaultData.fecha,
+    fecha: fechaFacturaFinal,
+    dFeEmiDE: fechaFacturaFinal,
+    fecFirma: fechaEnvioFinal,
     presencia: userData.presencia !== undefined ? userData.presencia : 1,
     factura: mergedFactura,
     cliente: mergedCliente,

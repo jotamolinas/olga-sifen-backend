@@ -153,7 +153,9 @@ const generarXmlPruebaHandler = async (req: Request, res: Response): Promise<voi
         },
         factura: {
           presencia: data.factura?.presencia,
-          fechaEnvio: data.factura?.fechaEnvio
+          fechaFactura: data.fecha,
+          fechaEnvioFirma: data.factura?.fechaEnvio,
+          desfaseMinutos: 10
         },
         cliente: {
           tipoOperacion: data.cliente?.tipoOperacion,
