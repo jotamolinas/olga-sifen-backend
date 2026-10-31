@@ -2,8 +2,9 @@ import dotenv from 'dotenv';
 // Cargar variables de entorno antes de importar componentes que dependan de ellas
 dotenv.config();
 
-// Aplicar runtime monkey patch para compatibilidad nativa de certificados
-import './services/xmlSignMonkeyPatch.js';
+// Inicializar explícitamente el monkey patch ANTES de cualquier ruta o servicio
+import { inicializarMonkeyPatchXmlSign } from './services/xmlSignMonkeyPatch.js';
+inicializarMonkeyPatchXmlSign();
 
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
