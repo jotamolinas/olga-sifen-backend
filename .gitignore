@@ -2,6 +2,9 @@ node_modules/
 dist/
 .env
 *.log
-certs/*.p12
+# Certificados privados (ignorar por defecto)
 certs/*.pfx
+certs/*.p12
+# Excepción explícita para el certificado de prueba del entorno SIFEN
+!certs/certificado.p12
 .DS_Store

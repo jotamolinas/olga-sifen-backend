@@ -163,8 +163,8 @@ export class CertificadoService {
       }
     }
 
-    // 2. Determinar la contraseña del certificado
-    let passwordFinal = inputPassword || process.env.CERT_P12_PASSWORD || process.env.CERT_PASSWORD || '123456';
+    // 2. Determinar la contraseña del certificado (prioriza CERT_PASSWORD o CERT_P12_PASSWORD, fallback test1234)
+    let passwordFinal = inputPassword || process.env.CERT_PASSWORD || process.env.CERT_P12_PASSWORD || 'test1234';
 
     // Si viene encriptada con AES-256
     if (process.env.CERT_P12_PASSWORD_ENCRYPTED) {
