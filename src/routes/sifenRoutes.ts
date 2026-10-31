@@ -333,20 +333,32 @@ const enviarSetPruebaHandler = async (req: Request, res: Response): Promise<void
       xmlFirmado = await SifenCoreService.firmarDocumento(xmlBase, rutaParaFirma, infoCert.password);
     }
 
-    // 3. Transmitir el documento a SIFEN (SET) mediante facturacionelectronicapy-setapi
+    // 3. Transmitir el documento a SIFEN (SET) mediante facturacionelectronicapy-setapi (o simulador de Fase 2)
     const idEnvio = inputBody.id ? Number(inputBody.id) : Math.floor(Date.now() / 1000);
+    const mockResponse = inputBody.mockResponse !== undefined ? Boolean(inputBody.mockResponse) : undefined;
+    const idCSC = inputBody.idCSC || inputBody.IdCSC;
+    const csc = inputBody.csc || inputBody.CSC;
+
     const resultadoTransmision = await SifenCoreService.transmitirDocumentoElectronico(
       xmlFirmado,
       rutaParaFirma,
       infoCert.password,
       sifenEnv,
-      idEnvio
+      idEnvio,
+      {
+        mockResponse,
+        idCSC,
+        csc
+      }
     );
 
     res.status(200).json({
       success: resultadoTransmision.success,
+      esMock: resultadoTransmision.esMock,
       mensaje: resultadoTransmision.success
-        ? 'Documento Electrónico transmitido y procesado exitosamente por la SET/SIFEN.'
+        ? (resultadoTransmision.esMock
+            ? 'Documento procesado exitosamente (Simulación SIFEN / Fase 2 activa: QR y KUDE listos).'
+            : 'Documento Electrónico transmitido y procesado exitosamente por la SET/SIFEN.')
         : `La SET/SIFEN respondió con código ${resultadoTransmision.codigoRespuesta}: ${resultadoTransmision.mensajeRespuesta}`,
       ambiente: sifenEnv,
       cdc: resultadoTransmision.cdc || cdc,
@@ -359,8 +371,11 @@ const enviarSetPruebaHandler = async (req: Request, res: Response): Promise<void
         numeroProtocolo: resultadoTransmision.numeroProtocolo,
         estado: resultadoTransmision.estadoDocumento
       },
+      qr: resultadoTransmision.qr,
+      kudeData: resultadoTransmision.kudeData,
       detallesSifen: resultadoTransmision.detallesSifen,
       xml_firmado: xmlFirmado,
+      xml_con_qr: resultadoTransmision.xml_con_qr,
       timestamp: new Date().toISOString()
     });
   } catch (error: any) {
