@@ -2,10 +2,6 @@ import xmlgen from 'facturacionelectronicapy-xmlgen';
 import xmlsign from 'facturacionelectronicapy-xmlsign';
 import qrgen from 'facturacionelectronicapy-qrgen';
 import setApi from 'facturacionelectronicapy-setapi';
-import { aplicarParcheCriptografico } from './cryptoFix.js';
-
-// Ejecutar parches de compatibilidad de claves y ciphers
-aplicarParcheCriptografico();
 
 // Soporte bidireccional para interoperabilidad ESM / CommonJS
 const xmlgenLib: any = (xmlgen as any)?.default || xmlgen;
@@ -79,13 +75,11 @@ export class SifenCoreService {
     password: string
   ): Promise<string> {
     try {
-      aplicarParcheCriptografico();
       // Intento 1: firma con nativeEncoding true
       const xmlFirmado: string = await xmlsignLib.signXML(xml, certBufferOrPath, password, true);
       return xmlFirmado;
     } catch (error: any) {
       try {
-        aplicarParcheCriptografico();
         // Intento 2: fallback sin el 4to parámetro
         const xmlFirmadoFallback: string = await xmlsignLib.signXML(xml, certBufferOrPath, password);
         return xmlFirmadoFallback;

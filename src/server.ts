@@ -2,9 +2,6 @@ import dotenv from 'dotenv';
 // Cargar variables de entorno antes de importar componentes que dependan de ellas
 dotenv.config();
 
-// Aplicar parches criptográficos y compatibilidad con certificados .p12
-import './services/cryptoFix.js';
-
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import sifenRoutes from './routes/sifenRoutes.js';
