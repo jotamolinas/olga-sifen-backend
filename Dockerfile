@@ -5,7 +5,6 @@ WORKDIR /app
 RUN apk add --no-cache openssl
 
 COPY package*.json tsconfig.json ./
-COPY patches ./patches
 RUN npm install
 
 COPY src ./src
@@ -31,7 +30,6 @@ ENV CERT_PASSWORD=test1234
 ENV CERT_P12_PASSWORD=test1234
 
 COPY package*.json ./
-COPY patches ./patches
 RUN npm install --only=production
 
 COPY --from=builder /app/dist ./dist

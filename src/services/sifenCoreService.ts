@@ -1,3 +1,8 @@
+import { applyXmlSignRuntimePatch } from './xmlSignMonkeyPatch.js';
+
+// Activar monkey patch en runtime antes de inicializar o invocar facturacionelectronicapy-xmlsign
+applyXmlSignRuntimePatch();
+
 import xmlgen from 'facturacionelectronicapy-xmlgen';
 import xmlsign from 'facturacionelectronicapy-xmlsign';
 import qrgen from 'facturacionelectronicapy-qrgen';
@@ -74,6 +79,7 @@ export class SifenCoreService {
     certBufferOrPath: string | Buffer,
     password: string
   ): Promise<string> {
+    applyXmlSignRuntimePatch();
     try {
       // Intento 1: firma con nativeEncoding true
       const xmlFirmado: string = await xmlsignLib.signXML(xml, certBufferOrPath, password, true);

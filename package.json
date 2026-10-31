@@ -4,7 +4,6 @@
   "description": "Microservicio backend para facturación electrónica SIFEN (Paraguay)",
   "main": "dist/server.js",
   "scripts": {
-    "postinstall": "npx patch-package",
     "build": "tsc",
     "start": "node dist/server.js",
     "dev": "tsx watch src/server.ts",
@@ -20,8 +19,7 @@
     "facturacionelectronicapy-setapi": "^1.0.0",
     "facturacionelectronicapy-xmlgen": "^1.0.0",
     "facturacionelectronicapy-xmlsign": "^1.0.0",
-    "fast-xml-parser": "^4.5.1",
-    "patch-package": "^8.0.0"
+    "fast-xml-parser": "^4.5.1"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",
