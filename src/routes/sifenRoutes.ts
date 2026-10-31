@@ -88,9 +88,11 @@ const testConexionHandler = async (req: Request, res: Response): Promise<void> =
       },
       certificadoDigital: {
         encontrado: infoCert.existe,
-        archivo: infoCert.ruta ? path.basename(infoCert.ruta) : null,
-        rutaCompleta: infoCert.ruta,
-        tamanioBytes: infoCert.tamanioBytes
+        archivo: infoCert.ruta ? path.basename(infoCert.ruta) : (infoCert.rutaPem ? path.basename(infoCert.rutaPem) : null),
+        rutaCompleta: infoCert.ruta || infoCert.rutaPem,
+        tamanioBytes: infoCert.tamanioBytes,
+        clavePrivadaPem: infoCert.rutaKey ? path.basename(infoCert.rutaKey) : null,
+        certificadoPem: infoCert.rutaPem ? path.basename(infoCert.rutaPem) : null
       },
       timestamp: new Date().toISOString()
     });
@@ -211,14 +213,15 @@ const firmarXmlPruebaHandler = async (req: Request, res: Response): Promise<void
     // 2. Localizar archivo de certificado .p12 y clave
     const infoCert = CertificadoService.localizarCertificadoYPassword(inputBody.certPath, inputBody.password);
 
-    if (!infoCert.existe || !infoCert.ruta) {
+    const rutaParaFirma = infoCert.ruta || infoCert.rutaPem;
+    if (!infoCert.existe || !rutaParaFirma) {
       res.status(200).json({
         success: false,
         codigo: 'CERTIFICADO_NO_ENCONTRADO',
-        mensaje: 'No se encontró el archivo de certificado digital .p12 o .pfx en el servidor.',
+        mensaje: 'No se encontró el archivo de certificado digital (.p12, .pem) en el servidor.',
         cdc: cdc,
         rutasBuscadas: infoCert.rutasBuscadas,
-        sugerencia: 'Coloque el archivo de certificado de prueba en ./certs/ (ej: ./certs/certificado.p12) o configure la variable de entorno CERT_P12_PATH.',
+        sugerencia: 'Coloque el archivo de certificado de prueba en ./certs/ (ej: ./certs/certificado.p12 o ./certs/certificado.pem) o configure la variable de entorno CERT_P12_PATH.',
         xml_sin_firmar: xmlBase,
         timestamp: new Date().toISOString()
       });
@@ -228,20 +231,20 @@ const firmarXmlPruebaHandler = async (req: Request, res: Response): Promise<void
     // 3. Ejecutar la firma digital con facturacionelectronicapy-xmlsign
     let xmlFirmado = '';
     try {
-      xmlFirmado = await SifenCoreService.firmarDocumento(xmlBase, infoCert.ruta, infoCert.password);
+      xmlFirmado = await SifenCoreService.firmarDocumento(xmlBase, rutaParaFirma, infoCert.password);
     } catch (cryptoError: any) {
       res.status(200).json({
         success: false,
         codigo: 'ERROR_CRIPTOGRAFICO_FIRMA',
-        mensaje: 'El certificado .p12 fue localizado pero ocurrió un error durante el proceso de firma digital.',
+        mensaje: 'El certificado fue localizado pero ocurrió un error durante el proceso de firma digital.',
         errorDetalle: cryptoError.message || String(cryptoError),
         cdc: cdc,
         certificado: {
-          archivo: path.basename(infoCert.ruta),
-          ruta: infoCert.ruta,
+          archivo: path.basename(rutaParaFirma),
+          ruta: rutaParaFirma,
           tamanioBytes: infoCert.tamanioBytes
         },
-        sugerencia: 'Verifique que la contraseña (CERT_P12_PASSWORD) coincida con la clave del certificado y que el archivo .p12 sea un contenedor PKCS#12 válido emitido por un prestador autorizado.',
+        sugerencia: 'Verifique que la contraseña (CERT_P12_PASSWORD) coincida con la clave del certificado.',
         xml_sin_firmar: xmlBase,
         timestamp: new Date().toISOString()
       });
@@ -255,8 +258,8 @@ const firmarXmlPruebaHandler = async (req: Request, res: Response): Promise<void
       cdc: cdc,
       version: 150,
       certificado: {
-        archivo: path.basename(infoCert.ruta),
-        ruta: infoCert.ruta,
+        archivo: path.basename(rutaParaFirma),
+        ruta: rutaParaFirma,
         tamanioBytes: infoCert.tamanioBytes,
         algoritmo: 'XMLDSig-RSA-SHA256'
       },

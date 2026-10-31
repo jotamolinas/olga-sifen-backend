@@ -22,11 +22,11 @@ function validarCertificado(certificadoBuffer, clave) {
             };
         }
 
-        // Verificar que tenga el formato PKCS#12 (comienza con 0x30 / ASN.1 SEQUENCE)
-        if (certificadoBuffer[0] !== 0x30) {
+        // Verificar que tenga el formato PKCS#12 (comienza con 0x30 / ASN.1 SEQUENCE) o formato PEM
+        if (certificadoBuffer[0] !== 0x30 && !certificadoBuffer.toString('utf8').includes('CERTIFICATE')) {
             return {
                 valido: false,
-                error: 'El archivo no parece ser un certificado PKCS#12 válido'
+                error: 'El archivo no parece ser un certificado PKCS#12 o PEM válido'
             };
         }
 
@@ -49,7 +49,9 @@ function validarCertificado(certificadoBuffer, clave) {
 function obtenerUbicacionesCandidatas() {
     const raw = [
         path.join(process.cwd(), 'certs', 'certificado.p12'),
+        path.join(process.cwd(), 'certs', 'certificado.pem'),
         path.join(__dirname, '..', 'certs', 'certificado.p12'),
+        path.join(__dirname, '..', 'certs', 'certificado.pem'),
         path.join(process.cwd(), 'certificado.p12'),
         path.join(__dirname, '..', 'certificado.p12'),
         path.join(process.cwd(), 'cert', 'certificado.p12'),

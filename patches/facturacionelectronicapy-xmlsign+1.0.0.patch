@@ -1,0 +1,189 @@
+diff --git a/node_modules/facturacionelectronicapy-xmlsign/dist/PKCS12.js b/node_modules/facturacionelectronicapy-xmlsign/dist/PKCS12.js
+index fd688c7..2b93250 100644
+--- a/node_modules/facturacionelectronicapy-xmlsign/dist/PKCS12.js
++++ b/node_modules/facturacionelectronicapy-xmlsign/dist/PKCS12.js
+@@ -4,46 +4,166 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
+ };
+ Object.defineProperty(exports, "__esModule", { value: true });
+ const fs_1 = __importDefault(require("fs"));
++const path_1 = __importDefault(require("path"));
++const crypto_1 = __importDefault(require("crypto"));
++const child_process_1 = require("child_process");
+ const node_forge_1 = __importDefault(require("node-forge"));
+ class PKCS12 {
++    constructor() {
++        this._privateKeyPem = null;
++        this._certificateB64 = null;
++    }
+     openCertificate(file) {
++        this._privateKeyPem = null;
++        this._certificateB64 = null;
++        this.p12 = undefined;
++        this.p12Asn1 = undefined;
++
++        const candidateDirs = [
++            path_1.default.dirname(file),
++            path_1.default.resolve(process.cwd(), 'certs'),
++            path_1.default.resolve(process.cwd())
++        ];
++
++        for (const dir of candidateDirs) {
++            const keyCandidates = [
++                path_1.default.join(dir, 'privada.key'),
++                path_1.default.join(dir, 'key.pem'),
++                path_1.default.join(dir, 'privada.pem'),
++                String(file).replace(/\.(p12|pfx)$/i, '.key'),
++                String(file).replace(/\.(p12|pfx)$/i, '.pem')
++            ];
++            const certCandidates = [
++                path_1.default.join(dir, 'certificado.pem'),
++                path_1.default.join(dir, 'cert.pem'),
++                String(file).replace(/\.(p12|pfx)$/i, '.pem'),
++                String(file).replace(/\.(p12|pfx)$/i, '.crt')
++            ];
++
++            let foundKey = null;
++            let foundCert = null;
++
++            for (const k of keyCandidates) {
++                if (fs_1.default.existsSync(k)) {
++                    try {
++                        const content = fs_1.default.readFileSync(k, 'utf8');
++                        if (content.includes('PRIVATE KEY')) {
++                            foundKey = content;
++                            break;
++                        }
++                    } catch (_) {}
++                }
++            }
++
++            for (const c of certCandidates) {
++                if (fs_1.default.existsSync(c)) {
++                    try {
++                        const content = fs_1.default.readFileSync(c, 'utf8');
++                        if (content.includes('CERTIFICATE')) {
++                            foundCert = content;
++                            break;
++                        }
++                    } catch (_) {}
++                }
++            }
++
++            if (foundKey && foundCert) {
++                this._privateKeyPem = foundKey;
++                const lines = foundCert.split(/\r?\n/).filter(line => !line.startsWith('-----') && line.trim().length > 0);
++                this._certificateB64 = '\n' + lines.join('\n');
++                return;
++            }
++        }
++
++        if (typeof crypto_1.default.parsePKCS12 === 'function') {
++            try {
++                const buf = fs_1.default.readFileSync(file);
++                const parsed = crypto_1.default.parsePKCS12(buf, { passphrase: this._passphrase || '' });
++                if (parsed.privateKey && parsed.certificate) {
++                    this._privateKeyPem = parsed.privateKey.export({ format: 'pem', type: 'pkcs8' });
++                    const certPem = parsed.certificate.toString();
++                    const lines = certPem.split(/\r?\n/).filter(line => !line.startsWith('-----') && line.trim().length > 0);
++                    this._certificateB64 = '\n' + lines.join('\n');
++                    return;
++                }
++            } catch (_) {}
++        }
++
++        try {
++            const passArg = this._passphrase ? `-passin pass:${this._passphrase}` : '-passin pass:';
++            const keyPem = (0, child_process_1.execSync)(`openssl pkcs12 -in "${file}" -nocerts -nodes ${passArg}`, { stdio: ['pipe', 'pipe', 'ignore'] }).toString('utf8');
++            const certPem = (0, child_process_1.execSync)(`openssl pkcs12 -in "${file}" -clcerts -nokeys ${passArg}`, { stdio: ['pipe', 'pipe', 'ignore'] }).toString('utf8');
++            if (keyPem.includes('PRIVATE KEY') && certPem.includes('CERTIFICATE')) {
++                this._privateKeyPem = keyPem;
++                const lines = certPem.split(/\r?\n/).filter(line => !line.startsWith('-----') && line.trim().length > 0);
++                this._certificateB64 = '\n' + lines.join('\n');
++                return;
++            }
++        } catch (_) {}
++
+         const pkcs12 = fs_1.default.readFileSync(file);
+         this.p12Asn1 = node_forge_1.default.asn1.fromDer(pkcs12.toString('binary'));
+     }
+     openFile(file, passphase) {
++        this._passphrase = passphase;
+         this.openCertificate(file);
+-        this.p12 = node_forge_1.default.pkcs12.pkcs12FromAsn1(this.p12Asn1, false, passphase);
++        if (this._privateKeyPem && this._certificateB64) {
++            return;
++        }
++        if (this.p12Asn1) {
++            this.p12 = node_forge_1.default.pkcs12.pkcs12FromAsn1(this.p12Asn1, false, passphase);
++        }
+     }
+     clean() {
+         this.p12 = undefined;
++        this.p12Asn1 = undefined;
++        this._privateKeyPem = null;
++        this._certificateB64 = null;
++        this._passphrase = undefined;
+     }
+     getPrivateKey() {
+-        for (let i = 0; i < this.p12.safeContents.length; i++) {
+-            if (this.p12.safeContents[i].safeBags[0].key) {
+-                return node_forge_1.default.pki.privateKeyToPem(this.p12.safeContents[i].safeBags[0].key);
++        if (this._privateKeyPem) {
++            return this._privateKeyPem;
++        }
++        if (this.p12 && this.p12.safeContents) {
++            for (let i = 0; i < this.p12.safeContents.length; i++) {
++                if (this.p12.safeContents[i].safeBags[0].key) {
++                    return node_forge_1.default.pki.privateKeyToPem(this.p12.safeContents[i].safeBags[0].key);
++                }
+             }
+         }
+         return null;
+     }
+     getCertificate() {
+-        for (let i = 0; i < this.p12.safeContents.length; i++) {
+-            if (this.p12.safeContents[i].safeBags[0].cert) {
+-                const b64 = node_forge_1.default.pki.certificateToPem(this.p12.safeContents[i].safeBags[0].cert);
+-                const l = b64.split('\n');
+-                l.pop();
+-                l.pop();
+-                l[0] = '';
+-                return l.join('\n');
++        if (this._certificateB64) {
++            return this._certificateB64;
++        }
++        if (this.p12 && this.p12.safeContents) {
++            for (let i = 0; i < this.p12.safeContents.length; i++) {
++                if (this.p12.safeContents[i].safeBags[0].cert) {
++                    const b64 = node_forge_1.default.pki.certificateToPem(this.p12.safeContents[i].safeBags[0].cert);
++                    const l = b64.split('\n');
++                    l.pop();
++                    l.pop();
++                    l[0] = '';
++                    return l.join('\n');
++                }
+             }
+         }
+         return null;
+     }
+     signature(xml, privateKey) {
+-        const md = node_forge_1.default.md.sha256.create();
+-        md.update(xml, 'utf8');
+-        var key = node_forge_1.default.pki.privateKeyFromPem(privateKey);
+-        return key.sign(md);
++        try {
++            const signer = crypto_1.default.createSign('RSA-SHA256');
++            signer.update(xml, 'utf8');
++            signer.end();
++            return signer.sign(privateKey, 'latin1');
++        } catch (_) {
++            const md = node_forge_1.default.md.sha256.create();
++            md.update(xml, 'utf8');
++            var key = node_forge_1.default.pki.privateKeyFromPem(privateKey);
++            return key.sign(md);
++        }
+     }
+ }
+ exports.default = new PKCS12();
+-//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoiUEtDUzEyLmpzIiwic291cmNlUm9vdCI6IiIsInNvdXJjZXMiOlsiLi4vc3JjL1BLQ1MxMi50cyJdLCJuYW1lcyI6W10sIm1hcHBpbmdzIjoiOzs7OztBQUFBLDRDQUFvQjtBQUNwQiw0REFBK0I7QUFFL0IsTUFBTSxNQUFNO0lBSVIsZUFBZSxDQUFDLElBQVk7UUFDeEIsTUFBTSxNQUFNLEdBQUcsWUFBRSxDQUFDLFlBQVksQ0FBQyxJQUFJLENBQUMsQ0FBQztRQUNyQyxJQUFJLENBQUMsT0FBTyxHQUFHLG9CQUFLLENBQUMsSUFBSSxDQUFDLE9BQU8sQ0FBQyxNQUFNLENBQUMsUUFBUSxDQUFDLFFBQVEsQ0FBQyxDQUFDLENBQUM7SUFDakUsQ0FBQztJQUVELFFBQVEsQ0FBQyxJQUFZLEVBQUUsU0FBaUI7UUFDcEMsSUFBSSxDQUFDLGVBQWUsQ0FBQyxJQUFJLENBQUMsQ0FBQztRQUUzQixJQUFJLENBQUMsR0FBRyxHQUFHLG9CQUFLLENBQUMsTUFBTSxDQUFDLGNBQWMsQ0FBQyxJQUFJLENBQUMsT0FBTyxFQUFFLEtBQUssRUFBRSxTQUFTLENBQUMsQ0FBQztJQUMzRSxDQUFDO0lBRUQsS0FBSztRQUNELElBQUksQ0FBQyxHQUFHLEdBQUcsU0FBUyxDQUFDO0lBQ3pCLENBQUM7SUFFRCxhQUFhO1FBQ1QsS0FBSyxJQUFJLENBQUMsR0FBRyxDQUFDLEVBQUUsQ0FBQyxHQUFHLElBQUksQ0FBQyxHQUFHLENBQUMsWUFBWSxDQUFDLE1BQU0sRUFBRSxDQUFDLEVBQUUsRUFBRTtZQUNuRCxJQUFJLElBQUksQ0FBQyxHQUFHLENBQUMsWUFBWSxDQUFDLENBQUMsQ0FBQyxDQUFDLFFBQVEsQ0FBQyxDQUFDLENBQUMsQ0FBQyxHQUFHLEVBQUU7Z0JBQzFDLE9BQU8sb0JBQUssQ0FBQyxHQUFHLENBQUMsZUFBZSxDQUFDLElBQUksQ0FBQyxHQUFHLENBQUMsWUFBWSxDQUFDLENBQUMsQ0FBQyxDQUFDLFFBQVEsQ0FBQyxDQUFDLENBQUMsQ0FBQyxHQUFHLENBQUMsQ0FBQzthQUM5RTtTQUNKO1FBQ0QsT0FBTyxJQUFJLENBQUM7SUFDaEIsQ0FBQztJQUVELGNBQWM7UUFDVixLQUFLLElBQUksQ0FBQyxHQUFHLENBQUMsRUFBRSxDQUFDLEdBQUcsSUFBSSxDQUFDLEdBQUcsQ0FBQyxZQUFZLENBQUMsTUFBTSxFQUFFLENBQUMsRUFBRSxFQUFFO1lBQ25ELElBQUksSUFBSSxDQUFDLEdBQUcsQ0FBQyxZQUFZLENBQUMsQ0FBQyxDQUFDLENBQUMsUUFBUSxDQUFDLENBQUMsQ0FBQyxDQUFDLElBQUksRUFBRTtnQkFDM0MsTUFBTSxHQUFHLEdBQUcsb0JBQUssQ0FBQyxHQUFHLENBQUMsZ0JBQWdCLENBQUMsSUFBSSxDQUFDLEdBQUcsQ0FBQyxZQUFZLENBQUMsQ0FBQyxDQUFDLENBQUMsUUFBUSxDQUFDLENBQUMsQ0FBQyxDQUFDLElBQUksQ0FBQyxDQUFDO2dCQUNsRixNQUFNLENBQUMsR0FBRyxHQUFHLENBQUMsS0FBSyxDQUFDLElBQUksQ0FBQyxDQUFDO2dCQUMxQixDQUFDLENBQUMsR0FBRyxFQUFFLENBQUM7Z0JBQ1IsQ0FBQyxDQUFDLEdBQUcsRUFBRSxDQUFDO2dCQUNSLENBQUMsQ0FBQyxDQUFDLENBQUMsR0FBRyxFQUFFLENBQUM7Z0JBQ1YsT0FBTyxDQUFDLENBQUMsSUFBSSxDQUFDLElBQUksQ0FBQyxDQUFDO2FBQ3ZCO1NBQ0o7UUFDRCxPQUFPLElBQUksQ0FBQztJQUNoQixDQUFDO0lBRUQsU0FBUyxDQUFDLEdBQVcsRUFBRSxVQUFlO1FBQ2xDLE1BQU0sRUFBRSxHQUFHLG9CQUFLLENBQUMsRUFBRSxDQUFDLE1BQU0sQ0FBQyxNQUFNLEVBQUUsQ0FBQztRQUNwQyxFQUFFLENBQUMsTUFBTSxDQUFDLEdBQUcsRUFBRSxNQUFNLENBQUMsQ0FBQztRQUN2QixJQUFJLEdBQUcsR0FBRyxvQkFBSyxDQUFDLEdBQUcsQ0FBQyxpQkFBaUIsQ0FBQyxVQUFVLENBQUMsQ0FBQztRQUNsRCxPQUFPLEdBQUcsQ0FBQyxJQUFJLENBQUMsRUFBRSxDQUFDLENBQUM7SUFDeEIsQ0FBQztDQUNKO0FBRUQsa0JBQWUsSUFBSSxNQUFNLEVBQUUsQ0FBQyJ9
+\ No newline at end of file

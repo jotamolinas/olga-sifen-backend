@@ -8,10 +8,12 @@ export interface InfoCertificadoLocalizado {
   existe: boolean;
   rutasBuscadas: string[];
   tamanioBytes?: number;
+  rutaKey?: string | null;
+  rutaPem?: string | null;
 }
 
 /**
- * Servicio de seguridad para el manejo y protección de certificados digitales .p12 / .pfx
+ * Servicio de seguridad para el manejo y protección de certificados digitales .p12 / .pfx / .pem
  * requeridos por la DNIT / SET para la firma de Documentos Electrónicos (DE) en SIFEN.
  * 
  * Implementa cifrado simétrico AES-256-GCM (Galois/Counter Mode), el cual provee
@@ -29,24 +31,19 @@ export class CertificadoService {
   private static getKey(): Buffer {
     const secret = process.env.AES_SECRET_KEY || 'sifen_paraguay_secret_fallback_key_2026';
 
-    // Si viene en formato HEX de 64 caracteres (32 bytes)
     if (/^[0-9a-fA-F]{64}$/.test(secret)) {
       return Buffer.from(secret, 'hex');
     }
 
-    // Si tiene exactamente 32 caracteres
     if (Buffer.byteLength(secret, 'utf8') === 32) {
       return Buffer.from(secret, 'utf8');
     }
 
-    // Para cualquier otra longitud, derivamos de forma consistente a 32 bytes usando SHA-256
     return crypto.createHash('sha256').update(secret).digest();
   }
 
   /**
-   * Encripta la contraseña de un certificado .p12 con AES-256-GCM
-   * @param password Contraseña en texto plano
-   * @returns Cadena con formato: {iv_hex}:{authTag_hex}:{encryptedData_hex}
+   * Encripta la contraseña de un certificado con AES-256-GCM
    */
   public static encriptarPassword(password: string): string {
     if (!password) {
@@ -70,8 +67,6 @@ export class CertificadoService {
 
   /**
    * Desencripta el payload cifrado de la contraseña
-   * @param payload Cadena con formato: {iv_hex}:{authTag_hex}:{encryptedData_hex}
-   * @returns Contraseña original en texto plano
    */
   public static desencriptarPassword(payload: string): string {
     if (!payload || !payload.includes(':')) {
@@ -101,7 +96,7 @@ export class CertificadoService {
   }
 
   /**
-   * Valida si el archivo de certificado .p12 existe en la ruta especificada
+   * Valida si el archivo de certificado existe en la ruta especificada
    */
   public static existeCertificado(filePath: string): boolean {
     try {
@@ -112,8 +107,7 @@ export class CertificadoService {
   }
 
   /**
-   * Localiza automáticamente el certificado .p12 / .pfx y su contraseña en el entorno.
-   * Busca en las rutas configuradas y en el directorio ./certs/
+   * Localiza automáticamente los certificados (.p12, .pfx, .pem, .key) y su contraseña en el entorno.
    */
   public static localizarCertificadoYPassword(
     inputCertPath?: string,
@@ -125,22 +119,23 @@ export class CertificadoService {
     const posiblesRutas: string[] = [];
     if (inputCertPath) posiblesRutas.push(inputCertPath);
     if (process.env.CERT_P12_PATH) posiblesRutas.push(process.env.CERT_P12_PATH);
+    if (process.env.CERT_PEM_PATH) posiblesRutas.push(process.env.CERT_PEM_PATH);
     posiblesRutas.push(path.resolve(process.cwd(), 'certs', 'certificado.p12'));
     posiblesRutas.push(path.resolve(process.cwd(), 'certs', 'test.p12'));
     posiblesRutas.push(path.resolve(process.cwd(), 'certs', 'certificado.pfx'));
+    posiblesRutas.push(path.resolve(process.cwd(), 'certs', 'certificado.pem'));
 
-    // Buscar también cualquier archivo .p12 o .pfx presente en ./certs/
     const certsDir = path.resolve(process.cwd(), 'certs');
     if (fs.existsSync(certsDir)) {
       try {
         const archivos = fs.readdirSync(certsDir);
         for (const file of archivos) {
-          if (file.endsWith('.p12') || file.endsWith('.pfx')) {
+          if (file.endsWith('.p12') || file.endsWith('.pfx') || file.endsWith('.pem')) {
             posiblesRutas.push(path.join(certsDir, file));
           }
         }
       } catch {
-        // Ignorar error de lectura de directorio
+        // Ignorar error de lectura
       }
     }
 
@@ -163,10 +158,36 @@ export class CertificadoService {
       }
     }
 
+    // Buscar clave privada y certificado PEM explícitos
+    let rutaKey: string | null = null;
+    let rutaPem: string | null = null;
+
+    const candidatasKey = [
+      path.resolve(process.cwd(), 'certs', 'privada.key'),
+      path.resolve(process.cwd(), 'certs', 'key.pem'),
+      path.resolve(process.cwd(), 'certs', 'privada.pem')
+    ];
+    for (const k of candidatasKey) {
+      if (fs.existsSync(k)) {
+        rutaKey = k;
+        break;
+      }
+    }
+
+    const candidatasPem = [
+      path.resolve(process.cwd(), 'certs', 'certificado.pem'),
+      path.resolve(process.cwd(), 'certs', 'cert.pem')
+    ];
+    for (const c of candidatasPem) {
+      if (fs.existsSync(c)) {
+        rutaPem = c;
+        break;
+      }
+    }
+
     // 2. Determinar la contraseña del certificado (prioriza CERT_PASSWORD o CERT_P12_PASSWORD, fallback test1234)
     let passwordFinal = inputPassword || process.env.CERT_PASSWORD || process.env.CERT_P12_PASSWORD || 'test1234';
 
-    // Si viene encriptada con AES-256
     if (process.env.CERT_P12_PASSWORD_ENCRYPTED) {
       try {
         passwordFinal = this.desencriptarPassword(process.env.CERT_P12_PASSWORD_ENCRYPTED);
@@ -178,9 +199,11 @@ export class CertificadoService {
     return {
       ruta: rutaEncontrada,
       password: passwordFinal,
-      existe: !!rutaEncontrada,
+      existe: !!rutaEncontrada || (!!rutaKey && !!rutaPem),
       rutasBuscadas,
-      tamanioBytes
+      tamanioBytes,
+      rutaKey,
+      rutaPem
     };
   }
 }

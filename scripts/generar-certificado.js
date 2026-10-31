@@ -2,37 +2,38 @@ const { execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
-const certDir = path.join(__dirname, 'certs');
-const keyPath = path.join(certDir, 'temp_key.pem');
-const certPemPath = path.join(certDir, 'temp_cert.pem');
+const certDir = path.join(__dirname, '..', 'certs');
+if (!fs.existsSync(certDir)) {
+  fs.mkdirSync(certDir, { recursive: true });
+}
+
+const keyPath = path.join(certDir, 'privada.key');
+const certPemPath = path.join(certDir, 'certificado.pem');
 const p12Path = path.join(certDir, 'certificado.p12');
 
-console.log('=== Generador de Certificado PKCS#12 SIFEN ===');
+console.log('=== Generador de Certificados SIFEN (PEM + PKCS#12) ===');
 
 try {
-  // 1. Generar clave privada RSA de 2048 bits
-  console.log('1. Generando clave privada RSA 2048...');
-  execSync(`openssl genrsa -out "${keyPath}" 2048`, { stdio: 'inherit' });
-
-  // 2. Generar certificado X.509 autofirmado
-  console.log('2. Generando certificado X.509 autofirmado...');
+  // 1. Generar clave privada RSA de 2048 bits y certificado X.509
+  console.log('1. Generando clave privada RSA 2048 y certificado X.509...');
   const subj = '/C=PY/ST=Central/L=Asuncion/O=SIFEN Test/OU=Facturacion Electronica/CN=SIFEN Test RSA 2048';
-  execSync(`openssl req -new -x509 -key "${keyPath}" -out "${certPemPath}" -days 730 -subj "${subj}"`, { stdio: 'inherit' });
+  execSync(
+    `openssl req -x509 -newkey rsa:2048 -keyout "${keyPath}" -out "${certPemPath}" -days 730 -nodes -subj "${subj}"`,
+    { stdio: 'inherit' }
+  );
 
-  // 3. Empaquetar a PKCS#12 con cifrado clásico PBE-SHA1-3DES (compatible nativo con node-forge)
-  console.log('3. Empaquetando contenedor PKCS#12 compatible nativo (PBE-SHA1-3DES)...');
+  // 2. Empaquetar a PKCS#12 para compatibilidad si es necesario
+  console.log('2. Empaquetando contenedor PKCS#12 compatible (PBE-SHA1-3DES)...');
   execSync(
     `openssl pkcs12 -export -out "${p12Path}" -inkey "${keyPath}" -in "${certPemPath}" -passout pass:test1234 -legacy -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1`,
     { stdio: 'inherit' }
   );
 
-  console.log('4. Limpiando archivos temporales PEM...');
-  if (fs.existsSync(keyPath)) fs.unlinkSync(keyPath);
-  if (fs.existsSync(certPemPath)) fs.unlinkSync(certPemPath);
-
-  const stats = fs.statSync(p12Path);
-  console.log(`✅ Certificado .p12 generado exitosamente: ${p12Path} (${stats.size} bytes)`);
+  console.log(`✅ Archivos generados exitosamente en ${certDir}:`);
+  console.log(`   - Clave privada: ${keyPath} (${fs.statSync(keyPath).size} bytes)`);
+  console.log(`   - Certificado PEM: ${certPemPath} (${fs.statSync(certPemPath).size} bytes)`);
+  console.log(`   - Contenedor .p12: ${p12Path} (${fs.statSync(p12Path).size} bytes)`);
 } catch (err) {
-  console.error('Error al generar certificado con OpenSSL:', err.message);
+  console.error('Error al generar certificados con OpenSSL:', err.message);
   process.exit(1);
 }
