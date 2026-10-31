@@ -5,7 +5,10 @@
  * - Ubicación geográfica paraguaya correcta: Capital (Dpto 1, Distrito 1, Ciudad 1 - ASUNCION).
  * - Desfase temporal estricto: La fecha de la factura (fecha / dFeEmiDE) es exactamente 10 minutos
  *   antes que la fecha de envío/firma (fechaEnvio / fecFirma). Nunca comparten la misma marca de tiempo.
- * - Cliente no contribuyente válido: Tipo operación 2 (B2C), CI paraguaya (1234567).
+ * - Cliente no contribuyente estricto:
+ *   { contribuyente: false, tipoOperacion: 2, razonSocial: 'JUAN CARLOS PEREZ', documentoTipo: 1,
+ *     documentoNumero: '1234567', ruc: '1234567-8', direccion: 'Av. Espana', numeroCasa: '500',
+ *     departamento: 1, distrito: 1, ciudad: 1, pais: 'PRY', paisDescripcion: 'Paraguay' }
  * - Nodo data.factura explícito con presencia: 1 (operación presencial) y fechaEnvio.
  * - Condición: Contado (tipo: 1) con desglose en efectivo.
  * - Ítems notariales: Tasa IVA 10% con ivaProporcion: 100 obligatorio en v150.
@@ -22,12 +25,10 @@ export function obtenerDatosPruebaSifenV150(inputBody: any = {}): SifenParamsAnd
   // 1. Marca de tiempo actual de Envío / Firma digital (fechaEnvio / fecFirma)
   const fechaEnvioFirmaDate = now;
   const fechaEnvioIso = fechaEnvioFirmaDate.toISOString().split('.')[0]; // 'YYYY-MM-DDTHH:mm:ss'
-  const fechaEnvioSoloDia = fechaEnvioFirmaDate.toISOString().split('T')[0]; // 'YYYY-MM-DD'
 
   // 2. Marca de tiempo de la Factura / Emisión: EXACTAMENTE 10 minutos antes (dFeEmiDE / fecha)
   const fechaFacturaDate = new Date(fechaEnvioFirmaDate.getTime() - 10 * 60 * 1000);
   const fechaFacturaIso = fechaFacturaDate.toISOString().split('.')[0]; // 'YYYY-MM-DDTHH:mm:ss'
-  const fechaFacturaSoloDia = fechaFacturaDate.toISOString().split('T')[0]; // 'YYYY-MM-DD'
 
   // Parámetros estáticos del Contribuyente Emisor (Escribanía Notarial)
   const defaultParams = {
@@ -67,27 +68,24 @@ export function obtenerDatosPruebaSifenV150(inputBody: any = {}): SifenParamsAnd
     ]
   };
 
-  // Cliente No Contribuyente (Consumidor Final B2C con Cédula de Identidad)
+  // Cliente No Contribuyente (Estructura Estricta requerida por SIFEN v150)
   const defaultClienteNoContribuyente = {
     contribuyente: false,
-    tipoOperacion: 2, // 2: B2C (Consumidor final)
-    tipoDocumento: 1, // 1: Cédula de Identidad Paraguaya
-    numeroDocumento: '1234567',
-    razonSocial: 'Juan Carlos Pérez Gómez',
-    nombreFantasia: '',
-    direccion: 'Palma 456 c/ Alberdi',
-    numeroCasa: '456',
+    tipoOperacion: 2,
+    razonSocial: 'JUAN CARLOS PEREZ',
+    documentoTipo: 1,
+    documentoNumero: '1234567',
+    ruc: '1234567-8',
+    direccion: 'Av. Espana',
+    numeroCasa: '500',
     departamento: 1,
-    departamentoDescripcion: 'CAPITAL',
     distrito: 1,
-    distritoDescripcion: 'ASUNCION (DISTRITO)',
     ciudad: 1,
-    ciudadDescripcion: 'ASUNCION (DISTRITO)',
     pais: 'PRY',
     paisDescripcion: 'Paraguay',
-    telefono: '021490000',
-    celular: '0981123456',
-    email: 'juan.perez.cliente@gmail.com'
+    // Compatibilidad adicional bidireccional
+    tipoDocumento: 1,
+    numeroDocumento: '1234567'
   };
 
   // Ítems notariales con ivaProporcion: 100 obligatorio en v150
@@ -154,14 +152,12 @@ export function obtenerDatosPruebaSifenV150(inputBody: any = {}): SifenParamsAnd
   };
 
   // Nodo específico data.factura exigido en v150
-  // La fecha de envío/firma es el tiempo actual
   const defaultFactura = {
     presencia: 1,           // 1: Operación presencial
     fechaEnvio: fechaEnvioIso
   };
 
-  // Factura Electrónica (data):
-  // La fecha de la factura es EXACTAMENTE 10 minutos antes que la fecha de envío/firma
+  // Factura Electrónica (data)
   const defaultData = {
     tipoDocumento: 1,       // 1: Factura Electrónica
     establecimiento: '001',
@@ -171,7 +167,7 @@ export function obtenerDatosPruebaSifenV150(inputBody: any = {}): SifenParamsAnd
     observacion: 'Facturación Electrónica SIFEN v150',
     fecha: fechaFacturaIso, // Exactamente 10 minutos antes que fechaEnvio / fecFirma
     dFeEmiDE: fechaFacturaIso,
-    fecFirma: fechaEnvioIso, // Marca de firma actual
+    fecFirma: fechaEnvioIso,
     tipoEmision: 1,         // 1: Normal
     tipoTransaccion: 1,     // 1: Venta de bienes / servicios
     tipoImpuesto: 1,        // 1: IVA
@@ -209,7 +205,12 @@ export function obtenerDatosPruebaSifenV150(inputBody: any = {}): SifenParamsAnd
   const userCliente = userData.cliente || inputBody.cliente || {};
   const mergedCliente = {
     ...defaultClienteNoContribuyente,
-    ...userCliente
+    ...userCliente,
+    documentoTipo: userCliente.documentoTipo !== undefined ? userCliente.documentoTipo : defaultClienteNoContribuyente.documentoTipo,
+    documentoNumero: userCliente.documentoNumero || userCliente.numeroDocumento || defaultClienteNoContribuyente.documentoNumero,
+    ruc: userCliente.ruc || defaultClienteNoContribuyente.ruc,
+    tipoDocumento: userCliente.tipoDocumento !== undefined ? userCliente.tipoDocumento : defaultClienteNoContribuyente.documentoTipo,
+    numeroDocumento: userCliente.numeroDocumento || userCliente.documentoNumero || defaultClienteNoContribuyente.documentoNumero
   };
 
   const userFactura = userData.factura || inputBody.factura || {};

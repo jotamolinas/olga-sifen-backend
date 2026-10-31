@@ -159,7 +159,9 @@ const generarXmlPruebaHandler = async (req: Request, res: Response): Promise<voi
         },
         cliente: {
           tipoOperacion: data.cliente?.tipoOperacion,
-          documento: `CI ${data.cliente?.numeroDocumento}`,
+          documentoTipo: data.cliente?.documentoTipo,
+          documentoNumero: data.cliente?.documentoNumero,
+          ruc: data.cliente?.ruc,
           razonSocial: data.cliente?.razonSocial,
           contribuyente: data.cliente?.contribuyente
         },
