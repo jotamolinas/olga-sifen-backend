@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.env
+*.log
+certs/*.p12
+certs/*.pfx
+.DS_Store
