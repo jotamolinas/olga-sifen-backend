@@ -1,0 +1,2 @@
+# Coloca aquí tu archivo de certificado digital (.p12 o .pfx) para pruebas de SIFEN.
+# Este archivo está ignorado por .gitignore para evitar filtración de claves privadas.

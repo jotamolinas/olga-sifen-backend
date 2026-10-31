@@ -1,5 +1,14 @@
 import crypto from 'crypto';
 import fs from 'fs';
+import path from 'path';
+
+export interface InfoCertificadoLocalizado {
+  ruta: string | null;
+  password: string;
+  existe: boolean;
+  rutasBuscadas: string[];
+  tamanioBytes?: number;
+}
 
 /**
  * Servicio de seguridad para el manejo y protección de certificados digitales .p12 / .pfx
@@ -18,10 +27,7 @@ export class CertificadoService {
    * desde la variable de entorno AES_SECRET_KEY o un fallback derivado con SHA-256.
    */
   private static getKey(): Buffer {
-    const secret = process.env.AES_SECRET_KEY;
-    if (!secret) {
-      throw new Error('La variable de entorno AES_SECRET_KEY no está configurada.');
-    }
+    const secret = process.env.AES_SECRET_KEY || 'sifen_paraguay_secret_fallback_key_2026';
 
     // Si viene en formato HEX de 64 caracteres (32 bytes)
     if (/^[0-9a-fA-F]{64}$/.test(secret)) {
@@ -98,6 +104,83 @@ export class CertificadoService {
    * Valida si el archivo de certificado .p12 existe en la ruta especificada
    */
   public static existeCertificado(filePath: string): boolean {
-    return fs.existsSync(filePath);
+    try {
+      return fs.existsSync(filePath);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Localiza automáticamente el certificado .p12 / .pfx y su contraseña en el entorno.
+   * Busca en las rutas configuradas y en el directorio ./certs/
+   */
+  public static localizarCertificadoYPassword(
+    inputCertPath?: string,
+    inputPassword?: string
+  ): InfoCertificadoLocalizado {
+    const rutasBuscadas: string[] = [];
+
+    // 1. Determinar posibles rutas del certificado
+    const posiblesRutas: string[] = [];
+    if (inputCertPath) posiblesRutas.push(inputCertPath);
+    if (process.env.CERT_P12_PATH) posiblesRutas.push(process.env.CERT_P12_PATH);
+    posiblesRutas.push(path.resolve(process.cwd(), 'certs', 'certificado.p12'));
+    posiblesRutas.push(path.resolve(process.cwd(), 'certs', 'test.p12'));
+    posiblesRutas.push(path.resolve(process.cwd(), 'certs', 'certificado.pfx'));
+
+    // Buscar también cualquier archivo .p12 o .pfx presente en ./certs/
+    const certsDir = path.resolve(process.cwd(), 'certs');
+    if (fs.existsSync(certsDir)) {
+      try {
+        const archivos = fs.readdirSync(certsDir);
+        for (const file of archivos) {
+          if (file.endsWith('.p12') || file.endsWith('.pfx')) {
+            posiblesRutas.push(path.join(certsDir, file));
+          }
+        }
+      } catch {
+        // Ignorar error de lectura de directorio
+      }
+    }
+
+    let rutaEncontrada: string | null = null;
+    let tamanioBytes: number | undefined;
+
+    for (const p of posiblesRutas) {
+      const rutaAbsoluta = path.isAbsolute(p) ? p : path.resolve(process.cwd(), p);
+      if (!rutasBuscadas.includes(rutaAbsoluta)) {
+        rutasBuscadas.push(rutaAbsoluta);
+      }
+      if (fs.existsSync(rutaAbsoluta)) {
+        rutaEncontrada = rutaAbsoluta;
+        try {
+          tamanioBytes = fs.statSync(rutaAbsoluta).size;
+        } catch {
+          tamanioBytes = undefined;
+        }
+        break;
+      }
+    }
+
+    // 2. Determinar la contraseña del certificado
+    let passwordFinal = inputPassword || process.env.CERT_P12_PASSWORD || process.env.CERT_PASSWORD || '123456';
+
+    // Si viene encriptada con AES-256
+    if (process.env.CERT_P12_PASSWORD_ENCRYPTED) {
+      try {
+        passwordFinal = this.desencriptarPassword(process.env.CERT_P12_PASSWORD_ENCRYPTED);
+      } catch {
+        // Fallback a password plana
+      }
+    }
+
+    return {
+      ruta: rutaEncontrada,
+      password: passwordFinal,
+      existe: !!rutaEncontrada,
+      rutasBuscadas,
+      tamanioBytes
+    };
   }
 }

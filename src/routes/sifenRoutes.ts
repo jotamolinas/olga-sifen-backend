@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import axios from 'axios';
+import path from 'path';
 import { XMLParser } from 'fast-xml-parser';
 import { verificarAlcanceSifen } from '../middlewares/alcance.js';
 import { CertificadoService } from '../services/certificadoService.js';
@@ -20,14 +21,8 @@ const testConexionHandler = async (req: Request, res: Response): Promise<void> =
       ? process.env.SIFEN_URL_PROD || 'https://sifen.set.gov.py/de/ws/consultas/consulta-ruc.wsdl'
       : process.env.SIFEN_URL_TEST || 'https://sifen-test.set.gov.py/de/ws/consultas/consulta-ruc.wsdl';
 
-    const certPath = process.env.CERT_P12_PATH || './certs/certificado.p12';
-    let certExists = false;
-
-    try {
-      certExists = CertificadoService.existeCertificado(certPath);
-    } catch {
-      certExists = false;
-    }
+    // Localizar certificado en el entorno
+    const infoCert = CertificadoService.localizarCertificadoYPassword();
 
     // Demostración segura del motor XML
     let xmlEngineStatus = 'READY';
@@ -92,8 +87,10 @@ const testConexionHandler = async (req: Request, res: Response): Promise<void> =
         ]
       },
       certificadoDigital: {
-        rutaConfigurada: certPath,
-        archivoEncontrado: certExists
+        encontrado: infoCert.existe,
+        archivo: infoCert.ruta ? path.basename(infoCert.ruta) : null,
+        rutaCompleta: infoCert.ruta,
+        tamanioBytes: infoCert.tamanioBytes
       },
       timestamp: new Date().toISOString()
     });
@@ -109,7 +106,7 @@ const testConexionHandler = async (req: Request, res: Response): Promise<void> =
 };
 
 /**
- * Rutas de prueba de conexión: admiten GET y POST para mayor facilidad de consumo
+ * Rutas de prueba de conexión
  */
 router.get('/test-conexion', testConexionHandler);
 router.post('/test-conexion', testConexionHandler);
@@ -121,11 +118,7 @@ router.post('/test-conexion', testConexionHandler);
 router.use(verificarAlcanceSifen);
 
 /**
- * Controlador para la generación del Documento Electrónico (DE) XML v150 de prueba.
- * 
- * Si el usuario envía un cuerpo vacío {} o incompleto, toma automáticamente
- * el objeto de prueba completo, geográficamente correcto y estructurado para SIFEN v150
- * (actividadesEconomicas, establecimientos, cliente no contribuyente, e items con ivaProporcion).
+ * Controlador para la generación del Documento Electrónico (DE) XML v150 de prueba (sin firmar).
  */
 const generarXmlPruebaHandler = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -189,10 +182,106 @@ const generarXmlPruebaHandler = async (req: Request, res: Response): Promise<voi
 };
 
 /**
- * Endpoint de prueba para generar XML DE v150:
- * Admite POST (para enviar datos personalizados) y GET (para prueba rápida inmediata)
+ * Controlador para la firma digital de prueba de Documentos Electrónicos con facturacionelectronicapy-xmlsign.
+ * 
+ * 1. Genera el XML v150 (o usa el provisto en req.body.xml).
+ * 2. Localiza el certificado .p12 en ./certs/ o rutas configuradas.
+ * 3. Aplica la firma digital XMLDSig sobre el nodo <DE>.
+ * 4. Devuelve el XML firmado junto con el CDC de 44 dígitos.
+ */
+const firmarXmlPruebaHandler = async (req: Request, res: Response): Promise<void> => {
+  let cdc = '';
+  let xmlBase = '';
+
+  try {
+    const inputBody = req.body || {};
+
+    // 1. Obtener o generar el XML base v150
+    if (inputBody.xml && typeof inputBody.xml === 'string' && inputBody.xml.includes('<DE')) {
+      xmlBase = inputBody.xml;
+      const matchCdc = xmlBase.match(/<DE\s+[^>]*Id="([0-9]{44})"/i) || xmlBase.match(/Id="([0-9]{44})"/i);
+      cdc = matchCdc ? matchCdc[1] : '';
+    } else {
+      const { params, data } = obtenerDatosPruebaSifenV150(inputBody);
+      const resGen = await SifenCoreService.generarDocumentoElectronico(params, data);
+      xmlBase = resGen.xml;
+      cdc = resGen.cdc;
+    }
+
+    // 2. Localizar archivo de certificado .p12 y clave
+    const infoCert = CertificadoService.localizarCertificadoYPassword(inputBody.certPath, inputBody.password);
+
+    if (!infoCert.existe || !infoCert.ruta) {
+      res.status(200).json({
+        success: false,
+        codigo: 'CERTIFICADO_NO_ENCONTRADO',
+        mensaje: 'No se encontró el archivo de certificado digital .p12 o .pfx en el servidor.',
+        cdc: cdc,
+        rutasBuscadas: infoCert.rutasBuscadas,
+        sugerencia: 'Coloque el archivo de certificado de prueba en ./certs/ (ej: ./certs/certificado.p12) o configure la variable de entorno CERT_P12_PATH.',
+        xml_sin_firmar: xmlBase,
+        timestamp: new Date().toISOString()
+      });
+      return;
+    }
+
+    // 3. Ejecutar la firma digital con facturacionelectronicapy-xmlsign
+    let xmlFirmado = '';
+    try {
+      xmlFirmado = await SifenCoreService.firmarDocumento(xmlBase, infoCert.ruta, infoCert.password);
+    } catch (cryptoError: any) {
+      res.status(200).json({
+        success: false,
+        codigo: 'ERROR_CRIPTOGRAFICO_FIRMA',
+        mensaje: 'El certificado .p12 fue localizado pero ocurrió un error durante el proceso de firma digital.',
+        errorDetalle: cryptoError.message || String(cryptoError),
+        cdc: cdc,
+        certificado: {
+          archivo: path.basename(infoCert.ruta),
+          ruta: infoCert.ruta,
+          tamanioBytes: infoCert.tamanioBytes
+        },
+        sugerencia: 'Verifique que la contraseña (CERT_P12_PASSWORD) coincida con la clave del certificado y que el archivo .p12 sea un contenedor PKCS#12 válido emitido por un prestador autorizado.',
+        xml_sin_firmar: xmlBase,
+        timestamp: new Date().toISOString()
+      });
+      return;
+    }
+
+    // 4. Retornar XML firmado exitosamente
+    res.status(200).json({
+      success: true,
+      mensaje: 'Documento electrónico v150 firmado digitalmente con éxito.',
+      cdc: cdc,
+      version: 150,
+      certificado: {
+        archivo: path.basename(infoCert.ruta),
+        ruta: infoCert.ruta,
+        tamanioBytes: infoCert.tamanioBytes,
+        algoritmo: 'XMLDSig-RSA-SHA256'
+      },
+      xml_firmado: xmlFirmado,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error: any) {
+    res.status(400).json({
+      success: false,
+      codigo: 'ERROR_GENERAL_FIRMA',
+      mensaje: error.message || 'Error general en el proceso de firma de prueba',
+      cdc: cdc || undefined,
+      xml_sin_firmar: xmlBase || undefined,
+      timestamp: new Date().toISOString()
+    });
+  }
+};
+
+/**
+ * Endpoints registrados
  */
 router.post('/generar-xml-prueba', generarXmlPruebaHandler);
 router.get('/generar-xml-prueba', generarXmlPruebaHandler);
+
+router.post('/firmar-xml-prueba', firmarXmlPruebaHandler);
+router.get('/firmar-xml-prueba', firmarXmlPruebaHandler);
 
 export default router;
