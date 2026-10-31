@@ -27,6 +27,9 @@ export function obtenerArchivosPem(): PemCertData | null {
     process.cwd(),
     '/app',
     '/workspace',
+    path.resolve(process.cwd(), 'certs'),
+    path.resolve('/app', 'certs'),
+    path.resolve('/workspace', 'certs'),
     path.resolve(__dirname, '..', '..'),
     path.resolve(__dirname, '..'),
     path.resolve(__dirname)
@@ -39,15 +42,15 @@ export function obtenerArchivosPem(): PemCertData | null {
   if (process.env.CERT_PEM_PATH) possibleCertPaths.push(path.resolve(process.env.CERT_PEM_PATH));
 
   for (const root of possibleRoots) {
-    possibleKeyPaths.push(path.resolve(root, 'certs', 'privada.key'));
-    possibleKeyPaths.push(path.resolve(root, 'certs', 'key.pem'));
-    possibleKeyPaths.push(path.resolve(root, 'certs', 'privada.pem'));
     possibleKeyPaths.push(path.resolve(root, 'privada.key'));
+    possibleKeyPaths.push(path.resolve(root, 'certs', 'privada.key'));
+    possibleKeyPaths.push(path.resolve(root, 'key.pem'));
+    possibleKeyPaths.push(path.resolve(root, 'certs', 'key.pem'));
 
-    possibleCertPaths.push(path.resolve(root, 'certs', 'certificado.pem'));
-    possibleCertPaths.push(path.resolve(root, 'certs', 'cert.pem'));
-    possibleCertPaths.push(path.resolve(root, 'certs', 'certificado.crt'));
     possibleCertPaths.push(path.resolve(root, 'certificado.pem'));
+    possibleCertPaths.push(path.resolve(root, 'certs', 'certificado.pem'));
+    possibleCertPaths.push(path.resolve(root, 'cert.pem'));
+    possibleCertPaths.push(path.resolve(root, 'certs', 'cert.pem'));
   }
 
   let foundKeyPath: string | null = null;
@@ -80,7 +83,7 @@ export function obtenerArchivosPem(): PemCertData | null {
     } catch (_) {}
   }
 
-  // Generación de emergencia con OpenSSL si no existen
+  // Generación dinámica de emergencia con OpenSSL si faltase alguno
   if (!keyContent || !certContent) {
     try {
       const fallbackDir = path.resolve(process.cwd(), 'certs');
@@ -99,7 +102,7 @@ export function obtenerArchivosPem(): PemCertData | null {
         certContent = fs.readFileSync(autoCert, 'utf8');
         foundKeyPath = autoKey;
         foundCertPath = autoCert;
-        console.log('⚡ Certificados PEM y KEY generados dinámicamente con OpenSSL en fallback.');
+        console.log('⚡ Certificados PEM y KEY generados dinámicamente con OpenSSL.');
       }
     } catch (err: any) {
       console.warn('⚠️ Fallback OpenSSL omitido:', err?.message || err);
@@ -110,7 +113,7 @@ export function obtenerArchivosPem(): PemCertData | null {
     const lines = certContent
       .split(/\r?\n/)
       .filter((line: string) => !line.startsWith('-----') && line.trim().length > 0);
-    const certB64 = '\n' + lines.join('\n');
+    const certB64 = lines.join('\n');
 
     cachedPemData = {
       keyContent,
@@ -118,7 +121,7 @@ export function obtenerArchivosPem(): PemCertData | null {
       keyPath: foundKeyPath || undefined,
       certPath: foundCertPath || undefined
     };
-    console.log(`🔐 Certificados PEM listos para firma: [Key: ${foundKeyPath}] [Cert: ${foundCertPath}]`);
+    console.log(`🔐 Certificados PEM listos: [Key: ${foundKeyPath}] [Cert: ${foundCertPath}]`);
     return cachedPemData;
   }
 
@@ -127,7 +130,8 @@ export function obtenerArchivosPem(): PemCertData | null {
 
 /**
  * Inicializa de forma definitiva el Monkey Patch en runtime para facturacionelectronicapy-xmlsign
- * y node-forge, garantizando que NUNCA se intente decodificar el ASN.1 de .p12 con node-forge.
+ * y node-forge, garantizando que NUNCA se intente decodificar el ASN.1 de .p12 con node-forge
+ * y que XMLDsigNode devuelva siempre el certificado y clave PEM como cadenas de texto no nulas.
  */
 export function inicializarMonkeyPatchXmlSign(): void {
   if (isPatchApplied) {
@@ -147,7 +151,6 @@ export function inicializarMonkeyPatchXmlSign(): void {
           try {
             return origFromDer.call(this, bytes, strict);
           } catch (err: any) {
-            // Retornar estructura ASN.1 inocua para evitar excepción Too few bytes
             return { tagClass: 0, type: 16, constructed: true, composed: true, value: [] };
           }
         };
@@ -184,7 +187,55 @@ export function inicializarMonkeyPatchXmlSign(): void {
       xmlsignDir = path.resolve(process.cwd(), 'node_modules', 'facturacionelectronicapy-xmlsign', 'dist');
     }
 
-    // 3. Parchear directamente PKCS12 y token en su prototipo y sus instancias
+    // 3. Parchear directamente XMLDsigNode (la clase principal utilizada para firma en NodeJS)
+    try {
+      const xmlDsigNodeMod = require(path.join(xmlsignDir, 'XMLDsigNode'));
+      const xmlDsigNodeInstance = xmlDsigNodeMod?.default || xmlDsigNodeMod;
+      const XMLDsigNodeClass = xmlDsigNodeInstance?.constructor;
+      const xmlDsigNodeProto = XMLDsigNodeClass?.prototype;
+
+      const dsigNodeTargets = [xmlDsigNodeInstance, xmlDsigNodeProto].filter(Boolean);
+
+      for (const target of dsigNodeTargets) {
+        target.openCertificate = function (_file: string) {
+          this.p12 = undefined;
+          this.p12Asn1 = undefined;
+          const pem = obtenerArchivosPem();
+          if (pem) {
+            this._certificate = pem.certB64;
+            this._privateKey = pem.keyContent;
+            this.certificate = pem.certB64;
+            this.privateKey = pem.keyContent;
+          }
+        };
+
+        target.openFile = function (file: string, _password: string) {
+          this.openCertificate(file);
+        };
+
+        target.cleanCertificate = function () {
+          this.p12 = undefined;
+          this.p12Asn1 = undefined;
+        };
+
+        target.getCertificate = function () {
+          const pem = obtenerArchivosPem();
+          const cert = pem ? pem.certB64 : (this._certificate || this.certificate || '');
+          return cert || '';
+        };
+
+        target.getPrivateKey = function () {
+          const pem = obtenerArchivosPem();
+          const key = pem ? pem.keyContent : (this._privateKey || this.privateKey || '');
+          return key || '';
+        };
+      }
+      console.log('✅ Prototipo e instancia de XMLDsigNode parcheados exitosamente.');
+    } catch (err: any) {
+      console.warn('⚠️ No se pudo parchear XMLDsigNode:', err?.message || err);
+    }
+
+    // 4. Parchear clases PKCS12 y token si existen
     const moduleFiles = ['PKCS12.js', 'token.js', 'PKCS12', 'token'];
     for (const f of moduleFiles) {
       try {
@@ -221,12 +272,12 @@ export function inicializarMonkeyPatchXmlSign(): void {
 
           t.getPrivateKey = function () {
             const pemData = obtenerArchivosPem();
-            return pemData ? pemData.keyContent : this._privateKeyPem || null;
+            return pemData ? pemData.keyContent : (this._privateKeyPem || '');
           };
 
           t.getCertificate = function () {
             const pemData = obtenerArchivosPem();
-            return pemData ? pemData.certB64 : this._certificateB64 || null;
+            return pemData ? pemData.certB64 : (this._certificateB64 || '');
           };
 
           t.signature = function (xml: string, privateKey: string) {
@@ -239,7 +290,7 @@ export function inicializarMonkeyPatchXmlSign(): void {
       } catch (_) {}
     }
 
-    // 4. Parchear XMLDsig en su prototipo e instancia para firmar directamente con crypto nativo
+    // 5. Parchear XMLDsig.js
     try {
       const xmlDsigPath = path.join(xmlsignDir, 'XMLDsig.js');
       const xmlDsigMod = require(xmlDsigPath);
@@ -258,16 +309,24 @@ export function inicializarMonkeyPatchXmlSign(): void {
             signer.end();
             return signer.sign(pemData.keyContent, 'base64');
           }
-          // Fallback a firma normal
-          const key = this.getPrivateKey ? this.getPrivateKey() : null;
-          if (key) {
-            const signer = crypto.createSign('RSA-SHA256');
-            signer.update(xml, 'utf8');
-            signer.end();
-            return signer.sign(key, 'base64');
-          }
           return '';
         };
+      }
+    } catch (_) {}
+
+    // 6. Parchear DESign en dist/index.js para que signXML use siempre XMLDsigNode
+    try {
+      const indexPath = path.join(xmlsignDir, 'index.js');
+      const indexMod = require(indexPath);
+      const indexInstance = indexMod?.default || indexMod;
+      const xmlDsigNodeMod = require(path.join(xmlsignDir, 'XMLDsigNode'));
+      const xmlDsigNode = xmlDsigNodeMod?.default || xmlDsigNodeMod;
+
+      if (indexInstance && xmlDsigNode) {
+        indexInstance.signXML = (xml: string, file: string, password: string, _signByNodeJS?: boolean) => {
+          return xmlDsigNode.signDocument(xml, 'DE', file, password);
+        };
+        console.log('✅ Entrypoint signXML delegado permanentemente a XMLDsigNode nativo.');
       }
     } catch (_) {}
 
