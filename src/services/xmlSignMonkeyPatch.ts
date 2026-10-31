@@ -186,7 +186,7 @@ export function applyXmlSignRuntimePatch(): void {
             const signer = crypto.createSign('RSA-SHA256');
             signer.update(xml, 'utf8');
             signer.end();
-            return signer.sign(privateKey, 'latin1');
+            return signer.sign(privateKey, 'binary' as any);
           };
         }
       } catch (_) {}
