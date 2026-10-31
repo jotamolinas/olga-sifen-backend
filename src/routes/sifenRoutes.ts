@@ -4,6 +4,7 @@ import { XMLParser } from 'fast-xml-parser';
 import { verificarAlcanceSifen } from '../middlewares/alcance.js';
 import { CertificadoService } from '../services/certificadoService.js';
 import { SifenCoreService } from '../services/sifenCoreService.js';
+import { obtenerDatosPruebaSifenV150 } from '../services/sifenDefaultTestData.js';
 
 const router = Router();
 
@@ -24,7 +25,7 @@ const testConexionHandler = async (req: Request, res: Response): Promise<void> =
 
     try {
       certExists = CertificadoService.existeCertificado(certPath);
-    } catch (certError: any) {
+    } catch {
       certExists = false;
     }
 
@@ -55,7 +56,7 @@ const testConexionHandler = async (req: Request, res: Response): Promise<void> =
       const startTime = Date.now();
       const response = await axios.get(targetUrl, {
         timeout: 4000,
-        validateStatus: () => true // Acepta cualquier código HTTP devuelto por SET
+        validateStatus: () => true
       });
       latencyMs = Date.now() - startTime;
       sifenEndpointStatus = `HTTP_${response.status}`;
@@ -97,7 +98,6 @@ const testConexionHandler = async (req: Request, res: Response): Promise<void> =
       timestamp: new Date().toISOString()
     });
   } catch (error: any) {
-    // Si ocurre un error inesperado, devuelve JSON estructurado con status 200/500 en lugar de tumbar el servidor
     res.status(200).json({
       success: false,
       codigo: 'TEST_CONEXION_DIAGNOSTIC_ERROR',
@@ -110,7 +110,6 @@ const testConexionHandler = async (req: Request, res: Response): Promise<void> =
 
 /**
  * Rutas de prueba de conexión: admiten GET y POST para mayor facilidad de consumo
- * (navegador, cURL, Postman o scripts de frontend)
  */
 router.get('/test-conexion', testConexionHandler);
 router.post('/test-conexion', testConexionHandler);
@@ -122,136 +121,52 @@ router.post('/test-conexion', testConexionHandler);
 router.use(verificarAlcanceSifen);
 
 /**
- * POST /api/sifen/generar-xml-prueba
- * Protegido por verificarAlcanceSifen.
- * Envuelto en try/catch robusto para garantizar respuestas JSON estructuradas ante cualquier eventualidad.
+ * Controlador para la generación del Documento Electrónico (DE) XML v150 de prueba.
+ * 
+ * Si el usuario envía un cuerpo vacío {} o incompleto, toma automáticamente
+ * el objeto de prueba completo, geográficamente correcto y estructurado para SIFEN v150
+ * (actividadesEconomicas, establecimientos, cliente no contribuyente, e items con ivaProporcion).
  */
-router.post('/generar-xml-prueba', async (req: Request, res: Response) => {
+const generarXmlPruebaHandler = async (req: Request, res: Response): Promise<void> => {
   try {
-    const body = req.body || {};
-    let params: any;
-    let data: any;
+    const inputBody = req.body || {};
 
-    if (body.params && body.data) {
-      params = body.params;
-      data = body.data;
-    } else {
-      const emisor = body.emisor || {};
-      const cliente = body.cliente || {};
-      const items = Array.isArray(body.items) && body.items.length > 0 ? body.items : [
-        {
-          codigo: 'HON-001',
-          descripcion: 'Honorarios notariales por protocolización y escrituración pública',
-          observacion: 'Acto Notarial de Compraventa Inmueble',
-          partidaArancelaria: 0,
-          ncm: 0,
-          unidadMedida: 77,
-          cantidad: 1,
-          precioUnitario: 1500000,
-          cambio: 0,
-          descuento: 0,
-          anticipo: 0,
-          pais: 'PRY',
-          tolerancia: 0,
-          toleranciaCantidad: 0,
-          toleranciaPorcentaje: 0,
-          cdcAnticipo: 0,
-          ivaTipo: 1,
-          ivaBase: 100,
-          iva: 10
-        },
-        {
-          codigo: 'CERT-002',
-          descripcion: 'Certificación notarial de firmas y documentos',
-          observacion: 'Firmas en contrato privado',
-          partidaArancelaria: 0,
-          ncm: 0,
-          unidadMedida: 77,
-          cantidad: 2,
-          precioUnitario: 150000,
-          cambio: 0,
-          descuento: 0,
-          anticipo: 0,
-          pais: 'PRY',
-          tolerancia: 0,
-          toleranciaCantidad: 0,
-          toleranciaPorcentaje: 0,
-          cdcAnticipo: 0,
-          ivaTipo: 1,
-          ivaBase: 100,
-          iva: 10
-        }
-      ];
+    // Obtener parámetros y datos completos con fallbacks oficiales para SIFEN v150
+    const { params, data } = obtenerDatosPruebaSifenV150(inputBody);
 
-      const fechaHoy = new Date().toISOString().split('T')[0];
-
-      params = {
-        version: 150,
-        sincronico: 'S',
-        tipoContribuyente: emisor.tipoContribuyente || 2,
-        ruc: emisor.ruc || '80012345-6',
-        razonSocial: emisor.razonSocial || 'Escribanía Notarial y Registro Público',
-        nombreFantasia: emisor.nombreFantasia || 'Escribanía Notarial Olga',
-        actividadesEconomicas: emisor.actividadesEconomicas || [
-          {
-            codigo: 69101,
-            descripcion: 'Actividades notariales y servicios jurídicos'
-          }
-        ],
-        timbradoNumero: emisor.timbradoNumero || '12567890',
-        timbradoFecha: emisor.timbradoFecha || fechaHoy
-      };
-
-      data = {
-        tipoDocumento: 1,
-        establecimiento: emisor.establecimiento || '001',
-        punto: emisor.punto || '001',
-        numero: emisor.numero || 1,
-        descripcion: 'Servicios Notariales Profesionales',
-        observacion: body.observacion || 'Facturación Electrónica SIFEN v150',
-        fecha: fechaHoy,
-        tipoEmision: 1,
-        tipoTransaccion: 1,
-        tipoImpuesto: 1,
-        moneda: 'PYG',
-        cliente: {
-          contribuyente: cliente.contribuyente !== undefined ? cliente.contribuyente : true,
-          ruc: cliente.ruc || '44444401-7',
-          razonSocial: cliente.razonSocial || 'Cliente Escribanía S.A.',
-          nombreFantasia: cliente.nombreFantasia || '',
-          tipoOperacion: cliente.tipoOperacion || 1,
-          direccion: cliente.direccion || 'Avda. Mariscal López 1234',
-          numeroCasa: cliente.numeroCasa || '1234',
-          departamento: cliente.departamento || 11,
-          distrito: cliente.distrito || 1,
-          ciudad: cliente.ciudad || 1,
-          pais: cliente.pais || 'PRY',
-          tipoContribuyente: cliente.tipoContribuyente || 2,
-          documentoTipo: cliente.documentoTipo || 1,
-          documentoNumero: cliente.documentoNumero || ''
-        },
-        condicion: {
-          tipo: 1,
-          entregas: [
-            {
-              tipo: 1,
-              monto: 1800000,
-              moneda: 'PYG'
-            }
-          ]
-        },
-        items: items
-      };
-    }
-
+    // Ejecutar generación del Documento Electrónico v150 y extracción de CDC
     const resultado = await SifenCoreService.generarDocumentoElectronico(params, data);
 
     res.status(200).json({
       success: true,
       mensaje: 'Documento electrónico v150 generado exitosamente.',
       cdc: resultado.cdc,
-      xml_generado: resultado.xml,
       version: 150,
+      datosUtilizados: {
+        emisor: {
+          ruc: params.ruc,
+          razonSocial: params.razonSocial,
+          actividadesEconomicas: params.actividadesEconomicas,
+          establecimiento: params.establecimientos[0]?.codigo,
+          departamento: params.establecimientos[0]?.departamentoDescripcion,
+          ciudad: params.establecimientos[0]?.ciudadDescripcion
+        },
+        cliente: {
+          tipoOperacion: data.cliente?.tipoOperacion,
+          documento: `CI ${data.cliente?.numeroDocumento}`,
+          razonSocial: data.cliente?.razonSocial,
+          contribuyente: data.cliente?.contribuyente
+        },
+        items: data.items.map((it: any) => ({
+          codigo: it.codigo,
+          descripcion: it.descripcion,
+          cantidad: it.cantidad,
+          precioUnitario: it.precioUnitario,
+          ivaProporcion: it.ivaProporcion,
+          ivaTasa: it.iva
+        }))
+      },
+      xml_generado: resultado.xml,
       timestamp: new Date().toISOString()
     });
   } catch (error: any) {
@@ -263,6 +178,13 @@ router.post('/generar-xml-prueba', async (req: Request, res: Response) => {
       timestamp: new Date().toISOString()
     });
   }
-});
+};
+
+/**
+ * Endpoint de prueba para generar XML DE v150:
+ * Admite POST (para enviar datos personalizados) y GET (para prueba rápida inmediata)
+ */
+router.post('/generar-xml-prueba', generarXmlPruebaHandler);
+router.get('/generar-xml-prueba', generarXmlPruebaHandler);
 
 export default router;
