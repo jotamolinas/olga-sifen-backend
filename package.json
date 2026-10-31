@@ -14,6 +14,10 @@
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
+    "facturacionelectronicapy-qrgen": "^1.0.0",
+    "facturacionelectronicapy-setapi": "^1.0.0",
+    "facturacionelectronicapy-xmlgen": "^1.0.0",
+    "facturacionelectronicapy-xmlsign": "^1.0.0",
     "fast-xml-parser": "^4.5.1"
   },
   "devDependencies": {
