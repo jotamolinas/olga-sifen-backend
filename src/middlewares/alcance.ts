@@ -5,16 +5,20 @@ import { Request, Response, NextFunction } from 'express';
  * Controla si el módulo de facturación electrónica SIFEN está habilitado o bloqueado.
  * 
  * Regla:
- * Si ENABLE_SIFEN_MODULE no es 'true', bloquea el acceso con código HTTP 503 (Service Unavailable).
+ * - Solo bloquea si ENABLE_SIFEN_MODULE está explícitamente configurado como 'false'.
+ * - Si no está definido (ej: despliegue inicial en Cloud Run), por defecto se considera habilitado
+ *   para evitar errores 503 automáticos.
  */
 export const verificarAlcanceSifen = (req: Request, res: Response, next: NextFunction): void => {
-  const isSifenEnabled = process.env.ENABLE_SIFEN_MODULE?.trim().toLowerCase() === 'true';
+  const flag = process.env.ENABLE_SIFEN_MODULE?.trim().toLowerCase();
+  const isExplicitlyDisabled = flag === 'false';
 
-  if (!isSifenEnabled) {
-    res.status(503).json({
+  if (isExplicitlyDisabled) {
+    res.status(403).json({
       success: false,
       codigo: 'SIFEN_MODULE_DISABLED',
-      mensaje: 'El módulo de facturación electrónica SIFEN está temporalmente deshabilitado en este entorno.',
+      mensaje: 'El módulo de facturación electrónica SIFEN se encuentra deshabilitado por Feature Flag (ENABLE_SIFEN_MODULE=false).',
+      sugerencia: 'Para habilitarlo en Cloud Run o localmente, configure ENABLE_SIFEN_MODULE=true en las variables de entorno.',
       timestamp: new Date().toISOString()
     });
     return;
