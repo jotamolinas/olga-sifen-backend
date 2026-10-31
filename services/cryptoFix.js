@@ -1,47 +1,40 @@
+/**
+ * Parche criptográfico CommonJS para node-forge ByteStringBuffer.getInt (soporta 40 bits).
+ */
 const crypto = require('crypto');
 
 function aplicarParcheCriptografico() {
   try {
     if (crypto.setDefaultCipherOptions) {
-      crypto.setDefaultCipherOptions({
-        legacyProvider: true
-      });
+      crypto.setDefaultCipherOptions({ legacyProvider: true });
     }
-  } catch (e) {}
+  } catch {}
 
   try {
     const forge = require('node-forge');
-
-    if (forge && forge.util && forge.util.ByteStringBuffer && forge.util.ByteStringBuffer.prototype) {
-      const origGetInt = forge.util.ByteStringBuffer.prototype.getInt;
-      forge.util.ByteStringBuffer.prototype.getInt = function (numOfBits) {
-        const numOfBytes = numOfBits / 8;
-        if (numOfBytes > 4 && numOfBytes <= 8) {
-          let value = 0;
-          for (let i = 0; i < numOfBytes; i++) {
-            value = value * 256 + this.getByte();
+    const ByteStringBuffer = forge?.util?.ByteStringBuffer;
+    if (ByteStringBuffer && ByteStringBuffer.prototype) {
+      const origGetInt = ByteStringBuffer.prototype.getInt;
+      if (origGetInt && !origGetInt.__patched40) {
+        ByteStringBuffer.prototype.getInt = function (n) {
+          if (n === 40 || (n > 32 && n <= 53 && n % 8 === 0)) {
+            let rval = 0;
+            do {
+              rval = (rval * 0x100) + this.data.charCodeAt(this.read++);
+              n -= 8;
+            } while (n > 0);
+            return rval;
           }
-          return value;
-        }
-        return origGetInt.call(this, numOfBits);
-      };
+          return origGetInt.call(this, n);
+        };
+        ByteStringBuffer.prototype.getInt.__patched40 = true;
+      }
     }
-
-    if (forge && forge.pkcs12 && forge.pkcs12.pkcs12FromAsn1) {
-      const origPkcs12FromAsn1 = forge.pkcs12.pkcs12FromAsn1;
-      forge.pkcs12.pkcs12FromAsn1 = function (asn1, strict, password) {
-        if (typeof strict === 'string') {
-          password = strict;
-          strict = false;
-        }
-        return origPkcs12FromAsn1.call(this, asn1, false, password);
-      };
-    }
-  } catch (e) {}
+  } catch {}
 }
 
 try {
   aplicarParcheCriptografico();
-} catch (e) {}
+} catch {}
 
 module.exports = { aplicarParcheCriptografico };

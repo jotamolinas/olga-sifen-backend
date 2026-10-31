@@ -17,6 +17,7 @@ ENV PORT=8080
 ENV CERT_P12_PATH=./certs/certificado.p12
 ENV CERT_PASSWORD=test1234
 ENV CERT_P12_PASSWORD=test1234
+ENV NODE_OPTIONS="--openssl-legacy-provider"
 
 COPY package*.json ./
 RUN npm ci --only=production
@@ -27,3 +28,4 @@ COPY certs ./certs
 EXPOSE 8080
 
 CMD ["node", "dist/server.js"]
+
