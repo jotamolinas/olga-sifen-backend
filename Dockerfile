@@ -13,6 +13,7 @@ FROM node:20-alpine AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
+ENV NODE_OPTIONS="--openssl-legacy-provider"
 ENV PORT=8080
 ENV CERT_P12_PATH=./certs/certificado.p12
 ENV CERT_PASSWORD=test1234

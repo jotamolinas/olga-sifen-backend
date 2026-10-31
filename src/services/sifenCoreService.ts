@@ -2,6 +2,10 @@ import xmlgen from 'facturacionelectronicapy-xmlgen';
 import xmlsign from 'facturacionelectronicapy-xmlsign';
 import qrgen from 'facturacionelectronicapy-qrgen';
 import setApi from 'facturacionelectronicapy-setapi';
+import { aplicarParcheCriptografico } from './cryptoFix.js';
+
+// Ejecutar parches de compatibilidad de claves y ciphers
+aplicarParcheCriptografico();
 
 // Soporte bidireccional para interoperabilidad ESM / CommonJS
 const xmlgenLib: any = (xmlgen as any)?.default || xmlgen;
@@ -75,11 +79,19 @@ export class SifenCoreService {
     password: string
   ): Promise<string> {
     try {
-      // El 4to parámetro `true` asegura el correcto manejo de codificación UTF-8 / caracteres especiales
+      aplicarParcheCriptografico();
+      // Intento 1: firma con nativeEncoding true
       const xmlFirmado: string = await xmlsignLib.signXML(xml, certBufferOrPath, password, true);
       return xmlFirmado;
     } catch (error: any) {
-      throw new Error(`Error al firmar documento XML con certificado: ${error.message || error}`);
+      try {
+        aplicarParcheCriptografico();
+        // Intento 2: fallback sin el 4to parámetro
+        const xmlFirmadoFallback: string = await xmlsignLib.signXML(xml, certBufferOrPath, password);
+        return xmlFirmadoFallback;
+      } catch (err2: any) {
+        throw new Error(`Error al firmar documento XML con certificado: ${error.message || err2.message || error}`);
+      }
     }
   }
 
