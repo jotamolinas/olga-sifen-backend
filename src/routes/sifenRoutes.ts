@@ -3,7 +3,7 @@ import axios from 'axios';
 import path from 'path';
 import { XMLParser } from 'fast-xml-parser';
 import { verificarAlcanceSifen } from '../middlewares/alcance.js';
-import { CertificadoService } from '../services/certificadoService.js';
+import { TenantService, EmpresaTenant, TenantConfig } from '../services/tenantService.js';
 import { SifenCoreService } from '../services/sifenCoreService.js';
 import { obtenerDatosPruebaSifenV150 } from '../services/sifenDefaultTestData.js';
 import { KudePdfService } from '../services/kudePdfService.js';
@@ -22,8 +22,28 @@ const testConexionHandler = async (req: Request, res: Response): Promise<void> =
       ? process.env.SIFEN_URL_PROD || 'https://sifen.set.gov.py/de/ws/consultas/consulta-ruc.wsdl'
       : process.env.SIFEN_URL_TEST || 'https://sifen-test.set.gov.py/de/ws/consultas/consulta-ruc.wsdl';
 
-    // Localizar certificado en el entorno
-    const infoCert = CertificadoService.localizarCertificadoYPassword();
+    // Estado SaaS Multi-Inquilino (Resolución dinámica por RUC vía Firestore y Storage)
+    let tenantInfo: any = null;
+    const rucConsulta = ((req.query.ruc as string) || (req.body?.ruc as string) || '').trim();
+    if (rucConsulta) {
+      try {
+        const tenant = await TenantService.obtenerTenantPorRuc(rucConsulta);
+        tenantInfo = {
+          encontrado: true,
+          ruc: tenant.empresa.ruc,
+          razonSocial: tenant.empresa.razonSocial,
+          certificadoStorage: tenant.empresa.rutaCertificadoStorage,
+          archivoLocal: path.basename(tenant.rutaLocalCertificado),
+          tamanioBytes: tenant.tamanioBytes
+        };
+      } catch (tErr: any) {
+        tenantInfo = {
+          encontrado: false,
+          ruc: rucConsulta,
+          error: tErr.message || String(tErr)
+        };
+      }
+    }
 
     // Demostración segura del motor XML
     let xmlEngineStatus = 'READY';
@@ -87,14 +107,13 @@ const testConexionHandler = async (req: Request, res: Response): Promise<void> =
           'facturacionelectronicapy-setapi'
         ]
       },
-      certificadoDigital: {
-        encontrado: infoCert.existe,
-        archivo: infoCert.ruta ? path.basename(infoCert.ruta) : (infoCert.rutaPem ? path.basename(infoCert.rutaPem) : null),
-        rutaCompleta: infoCert.ruta || infoCert.rutaPem,
-        tamanioBytes: infoCert.tamanioBytes,
-        clavePrivadaPem: infoCert.rutaKey ? path.basename(infoCert.rutaKey) : null,
-        certificadoPem: infoCert.rutaPem ? path.basename(infoCert.rutaPem) : null
+      arquitecturaSaaS: {
+        multiTenant: true,
+        proveedor: 'Firebase Firestore & Cloud Storage',
+        coleccionEmpresas: 'empresas',
+        almacenamientoTmp: '/tmp/cert_{ruc}.p12'
       },
+      tenantConsultado: tenantInfo,
       timestamp: new Date().toISOString()
     });
   } catch (error: any) {
@@ -211,41 +230,49 @@ const firmarXmlPruebaHandler = async (req: Request, res: Response): Promise<void
       cdc = resGen.cdc;
     }
 
-    // 2. Localizar archivo de certificado .p12 y clave
-    const infoCert = CertificadoService.localizarCertificadoYPassword(inputBody.certPath, inputBody.password);
+    // 2. Resolver RUC del emisor y descargar dinámicamente su certificado desde Cloud Storage hacia /tmp/cert_{ruc}.p12
+    let rucEmisor = (
+      inputBody.ruc ||
+      inputBody.params?.ruc ||
+      inputBody.params?.dRUCEmi ||
+      (typeof req.query.ruc === 'string' ? req.query.ruc : '') ||
+      ''
+    ).trim();
 
-    const rutaParaFirma = infoCert.ruta || infoCert.rutaPem;
-    if (!infoCert.existe || !rutaParaFirma) {
-      res.status(200).json({
-        success: false,
-        codigo: 'CERTIFICADO_NO_ENCONTRADO',
-        mensaje: 'No se encontró el archivo de certificado digital (.p12, .pem) en el servidor.',
-        cdc: cdc,
-        rutasBuscadas: infoCert.rutasBuscadas,
-        sugerencia: 'Coloque el archivo de certificado de prueba en ./certs/ (ej: ./certs/certificado.p12 o ./certs/certificado.pem) o configure la variable de entorno CERT_P12_PATH.',
-        xml_sin_firmar: xmlBase,
-        timestamp: new Date().toISOString()
-      });
-      return;
+    if (!rucEmisor && xmlBase) {
+      const matchRucXml = xmlBase.match(/<dRUCEmi>([^<]+)<\/dRUCEmi>/i) || xmlBase.match(/<dRucEm>([^<]+)<\/dRucEm>/i);
+      if (matchRucXml && matchRucXml[1]) {
+        rucEmisor = matchRucXml[1].trim();
+      }
     }
+
+    if (!rucEmisor) {
+      rucEmisor = '80012345-6';
+    }
+
+    console.log(`🏢 [Tenant SaaS] Resolviendo inquilino y descargando certificado .p12 para RUC: ${rucEmisor}...`);
+    const tenantConfig = await TenantService.obtenerTenantPorRuc(rucEmisor);
+    const rutaParaFirma = tenantConfig.rutaLocalCertificado;
+    const claveCertificado = tenantConfig.empresa.claveCertificado;
 
     // 3. Ejecutar la firma digital con facturacionelectronicapy-xmlsign
     let xmlFirmado = '';
     try {
-      xmlFirmado = await SifenCoreService.firmarDocumento(xmlBase, rutaParaFirma, infoCert.password);
+      xmlFirmado = await SifenCoreService.firmarDocumento(xmlBase, rutaParaFirma, claveCertificado);
     } catch (cryptoError: any) {
       res.status(200).json({
         success: false,
         codigo: 'ERROR_CRIPTOGRAFICO_FIRMA',
-        mensaje: 'El certificado fue localizado pero ocurrió un error durante el proceso de firma digital.',
+        mensaje: 'Ocurrió un error durante el proceso de firma digital con el certificado del inquilino.',
         errorDetalle: cryptoError.message || String(cryptoError),
         cdc: cdc,
-        certificado: {
+        tenant: {
+          ruc: tenantConfig.empresa.ruc,
+          razonSocial: tenantConfig.empresa.razonSocial,
           archivo: path.basename(rutaParaFirma),
           ruta: rutaParaFirma,
-          tamanioBytes: infoCert.tamanioBytes
+          tamanioBytes: tenantConfig.tamanioBytes
         },
-        sugerencia: 'Verifique que la contraseña (CERT_P12_PASSWORD) coincida con la clave del certificado.',
         xml_sin_firmar: xmlBase,
         timestamp: new Date().toISOString()
       });
@@ -255,13 +282,15 @@ const firmarXmlPruebaHandler = async (req: Request, res: Response): Promise<void
     // 4. Retornar XML firmado exitosamente
     res.status(200).json({
       success: true,
-      mensaje: 'Documento electrónico v150 firmado digitalmente con éxito.',
+      mensaje: 'Documento electrónico v150 firmado digitalmente con éxito (SaaS Multi-Tenant).',
       cdc: cdc,
       version: 150,
-      certificado: {
-        archivo: path.basename(rutaParaFirma),
-        ruta: rutaParaFirma,
-        tamanioBytes: infoCert.tamanioBytes,
+      tenant: {
+        ruc: tenantConfig.empresa.ruc,
+        razonSocial: tenantConfig.empresa.razonSocial,
+        certificado: path.basename(rutaParaFirma),
+        rutaLocal: rutaParaFirma,
+        tamanioBytes: tenantConfig.tamanioBytes,
         algoritmo: 'XMLDSig-RSA-SHA256'
       },
       xml_firmado: xmlFirmado,
@@ -296,22 +325,35 @@ const enviarSetPruebaHandler = async (req: Request, res: Response): Promise<void
   try {
     const inputBody = req.body || {};
 
-    // 1. Localizar archivo de certificado digital (.p12 o .pem)
-    const infoCert = CertificadoService.localizarCertificadoYPassword(inputBody.certPath, inputBody.password);
-    const rutaParaFirma = infoCert.ruta || infoCert.rutaPem;
+    // 1. Obtener RUC del emisor desde la petición o el XML
+    let rucEmisor = (
+      inputBody.ruc ||
+      inputBody.params?.ruc ||
+      inputBody.params?.dRUCEmi ||
+      (typeof req.query.ruc === 'string' ? req.query.ruc : '') ||
+      ''
+    ).trim();
 
-    if (!infoCert.existe || !rutaParaFirma) {
-      res.status(200).json({
-        success: false,
-        codigo: 'CERTIFICADO_NO_ENCONTRADO',
-        mensaje: 'No se encontró el archivo de certificado digital (.p12, .pem) en el servidor para transmitir a SIFEN.',
-        rutasBuscadas: infoCert.rutasBuscadas,
-        timestamp: new Date().toISOString()
-      });
-      return;
+    if (!rucEmisor && inputBody.xml && typeof inputBody.xml === 'string') {
+      const matchRucXml = inputBody.xml.match(/<dRUCEmi>([^<]+)<\/dRUCEmi>/i) || inputBody.xml.match(/<dRucEm>([^<]+)<\/dRucEm>/i);
+      if (matchRucXml && matchRucXml[1]) {
+        rucEmisor = matchRucXml[1].trim();
+      }
     }
 
-    // 2. Obtener o generar XML y firmarlo
+    if (!rucEmisor) {
+      rucEmisor = '80012345-6';
+    }
+
+    // 2. Descargar dinámicamente el certificado .p12 desde Cloud Storage a /tmp/cert_{ruc}.p12 y obtener credenciales
+    console.log(`🏢 [Tenant SaaS] Resolviendo inquilino y certificado .p12 para RUC: ${rucEmisor}...`);
+    const tenantConfig = await TenantService.obtenerTenantPorRuc(rucEmisor);
+    const rutaParaFirma = tenantConfig.rutaLocalCertificado;
+    const passwordCertificado = tenantConfig.empresa.claveCertificado;
+    const idCSC = tenantConfig.empresa.idCsc || inputBody.idCSC || '0001';
+    const csc = tenantConfig.empresa.csc || inputBody.csc || 'ABCD1234567890';
+
+    // 3. Obtener o generar XML y firmarlo
     if (inputBody.xml && typeof inputBody.xml === 'string' && inputBody.xml.includes('Signature')) {
       // El XML ya viene firmado
       xmlFirmado = inputBody.xml;
@@ -330,26 +372,25 @@ const enviarSetPruebaHandler = async (req: Request, res: Response): Promise<void
         cdc = resGen.cdc;
       }
 
-      // Firmar el documento digitalmente
-      xmlFirmado = await SifenCoreService.firmarDocumento(xmlBase, rutaParaFirma, infoCert.password);
+      // Firmar el documento digitalmente con el certificado del inquilino
+      xmlFirmado = await SifenCoreService.firmarDocumento(xmlBase, rutaParaFirma, passwordCertificado);
     }
 
-    // 3. Transmitir el documento a SIFEN (SET) mediante facturacionelectronicapy-setapi (o simulador de Fase 2)
+    // 4. Transmitir el documento a SIFEN (SET) mediante facturacionelectronicapy-setapi (o simulador de Fase 2)
     const idEnvio = inputBody.id ? Number(inputBody.id) : Math.floor(Date.now() / 1000);
     const mockResponse = inputBody.mockResponse !== undefined ? Boolean(inputBody.mockResponse) : undefined;
-    const idCSC = inputBody.idCSC || inputBody.IdCSC || '0001';
-    const csc = inputBody.csc || inputBody.CSC || 'ABCD1234567890';
 
     const resultadoTransmision = await SifenCoreService.transmitirDocumentoElectronico(
       xmlFirmado,
       rutaParaFirma,
-      infoCert.password,
+      passwordCertificado,
       sifenEnv,
       idEnvio,
       {
         mockResponse,
         idCSC,
-        csc
+        csc,
+        empresa: tenantConfig.empresa
       }
     );
 
@@ -367,6 +408,12 @@ const enviarSetPruebaHandler = async (req: Request, res: Response): Promise<void
       cdc: resultadoTransmision.cdc || cdc,
       dProtAut: dProtAut,
       numeroProtocolo: dProtAut,
+      tenant: {
+        ruc: tenantConfig.empresa.ruc,
+        razonSocial: tenantConfig.empresa.razonSocial,
+        certificado: path.basename(rutaParaFirma),
+        rutaLocal: rutaParaFirma
+      },
       transmision: {
         idEnvio: resultadoTransmision.idEnvio,
         codigoRespuesta: resultadoTransmision.codigoRespuesta,

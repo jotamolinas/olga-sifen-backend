@@ -131,6 +131,70 @@ export function obtenerArchivosPem(): PemCertData | null {
 }
 
 /**
+ * Extrae dinámicamente el certificado y clave privada PEM desde un archivo .p12 específico de un inquilino
+ */
+export function extraerPemDesdeP12(p12Path: string, password = ''): PemCertData | null {
+  if (!p12Path || !fs.existsSync(p12Path)) {
+    return null;
+  }
+  try {
+    const keyPem = execSync(
+      `openssl pkcs12 -in "${p12Path}" -passin pass:"${password}" -nocerts -nodes -legacy`,
+      { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] }
+    );
+    const certPem = execSync(
+      `openssl pkcs12 -in "${p12Path}" -passin pass:"${password}" -clcerts -nokeys -legacy`,
+      { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] }
+    );
+    const matchCert = certPem.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/);
+    const certFull = matchCert ? matchCert[0] : certPem;
+    const certB64 = certFull
+      .replace(/-----BEGIN CERTIFICATE-----/g, '')
+      .replace(/-----END CERTIFICATE-----/g, '')
+      .replace(/\r?\n|\r/g, '')
+      .trim();
+
+    console.log(`🔑 [Tenant SaaS] Clave y certificado PEM extraídos dinámicamente de ${p12Path}`);
+    return {
+      keyContent: keyPem,
+      certB64,
+      certFullPem: certFull,
+      keyPath: p12Path,
+      certPath: p12Path
+    };
+  } catch (err: any) {
+    try {
+      const keyPem = execSync(
+        `openssl pkcs12 -in "${p12Path}" -passin pass:"${password}" -nocerts -nodes`,
+        { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] }
+      );
+      const certPem = execSync(
+        `openssl pkcs12 -in "${p12Path}" -passin pass:"${password}" -clcerts -nokeys`,
+        { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] }
+      );
+      const matchCert = certPem.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/);
+      const certFull = matchCert ? matchCert[0] : certPem;
+      const certB64 = certFull
+        .replace(/-----BEGIN CERTIFICATE-----/g, '')
+        .replace(/-----END CERTIFICATE-----/g, '')
+        .replace(/\r?\n|\r/g, '')
+        .trim();
+
+      console.log(`🔑 [Tenant SaaS] Clave y certificado PEM extraídos (estándar) de ${p12Path}`);
+      return {
+        keyContent: keyPem,
+        certB64,
+        certFullPem: certFull,
+        keyPath: p12Path,
+        certPath: p12Path
+      };
+    } catch (_) {
+      return null;
+    }
+  }
+}
+
+/**
  * Inicializa de forma definitiva el Monkey Patch en runtime para facturacionelectronicapy-xmlsign,
  * facturacionelectronicapy-setapi y node-forge.
  * 
@@ -203,10 +267,11 @@ export function inicializarMonkeyPatchXmlSign(): void {
       const dsigNodeTargets = [xmlDsigNodeInstance, xmlDsigNodeProto].filter(Boolean);
 
       for (const target of dsigNodeTargets) {
-        target.openCertificate = function (_file: string) {
+        target.openCertificate = function (file: string, password = '') {
           this.p12 = undefined;
           this.p12Asn1 = undefined;
-          const pem = obtenerArchivosPem();
+          const tenantPem = file ? extraerPemDesdeP12(file, password || this._passphrase || '') : null;
+          const pem = tenantPem || obtenerArchivosPem();
           if (pem) {
             this._certificate = pem.certB64;
             this._privateKey = pem.keyContent;
@@ -215,8 +280,9 @@ export function inicializarMonkeyPatchXmlSign(): void {
           }
         };
 
-        target.openFile = function (file: string, _password: string) {
-          this.openCertificate(file);
+        target.openFile = function (file: string, password = '') {
+          this._passphrase = password;
+          this.openCertificate(file, password);
         };
 
         target.cleanCertificate = function () {
@@ -225,15 +291,17 @@ export function inicializarMonkeyPatchXmlSign(): void {
         };
 
         target.getCertificate = function () {
+          const cert = this._certificate || this.certificate;
+          if (cert) return cert;
           const pem = obtenerArchivosPem();
-          const cert = pem ? pem.certB64 : (this._certificate || this.certificate || '');
-          return cert || '';
+          return pem ? pem.certB64 : '';
         };
 
         target.getPrivateKey = function () {
+          const key = this._privateKey || this.privateKey;
+          if (key) return key;
           const pem = obtenerArchivosPem();
-          const key = pem ? pem.keyContent : (this._privateKey || this.privateKey || '');
-          return key || '';
+          return pem ? pem.keyContent : '';
         };
       }
       console.log('✅ Prototipo e instancia de XMLDsigNode parcheados exitosamente.');
@@ -253,10 +321,11 @@ export function inicializarMonkeyPatchXmlSign(): void {
         const targets = [instance, proto].filter(Boolean);
 
         for (const t of targets) {
-          t.openCertificate = function (_file: string) {
+          t.openCertificate = function (file: string, password = '') {
             this.p12 = undefined;
             this.p12Asn1 = undefined;
-            const pemData = obtenerArchivosPem();
+            const tenantPem = file ? extraerPemDesdeP12(file, password || this._passphrase || '') : null;
+            const pemData = tenantPem || obtenerArchivosPem();
             if (pemData) {
               this._privateKeyPem = pemData.keyContent;
               this._certificateB64 = pemData.certB64;
@@ -265,7 +334,7 @@ export function inicializarMonkeyPatchXmlSign(): void {
 
           t.openFile = function (file: string, passphase: string) {
             this._passphrase = passphase;
-            this.openCertificate(file);
+            this.openCertificate(file, passphase);
           };
 
           t.clean = function () {

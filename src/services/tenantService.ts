@@ -167,13 +167,18 @@ export class TenantService {
     // 2. Descargar certificado desde Cloud Storage a Buffer
     const certificadoBuffer = await this.descargarCertificadoStorage(empresa.rutaCertificadoStorage);
 
-    // 3. Persistir temporalmente en /tmp/ (o el directorio temporal del OS) para librerías que esperan una ruta de archivo
-    const sanitizedRuc = rucNormalizado.replace(/[^a-zA-Z0-9]/g, '_');
-    const tempDir = os.tmpdir();
-    const nombreArchivo = `cert_${sanitizedRuc}.p12`;
-    const rutaLocalCertificado = path.join(tempDir, nombreArchivo);
+    // 3. Persistir dinámicamente hacia /tmp/cert_{ruc}.p12
+    const sanitizedRuc = rucNormalizado.replace(/[^a-zA-Z0-9-]/g, '_');
+    const tempDir = (process.platform === 'win32' && !fs.existsSync('/tmp')) ? os.tmpdir() : '/tmp';
+    if (!fs.existsSync(tempDir)) {
+      try {
+        fs.mkdirSync(tempDir, { recursive: true });
+      } catch (_) {}
+    }
+    const rutaLocalCertificado = path.join(tempDir, `cert_${sanitizedRuc}.p12`);
 
     fs.writeFileSync(rutaLocalCertificado, certificadoBuffer);
+    console.log(`💾 [Tenant SaaS] Certificado guardado en: ${rutaLocalCertificado}`);
 
     const config: TenantConfig = {
       empresa,

@@ -16,24 +16,18 @@ export class FirebaseService {
   private static inicializado = false;
 
   /**
-   * Obtiene la credencial de autenticación de forma segura desde el entorno
+   * Obtiene la credencial de autenticación de forma segura desde el entorno.
+   * Parsea directamente las credenciales usando JSON.parse(process.env.FIREBASE_CREDENTIALS).
    */
   private static resolverCredencial(): admin.ServiceAccount | null {
-    // 1. Variable de entorno FIREBASE_CREDENTIALS (JSON directo o ruta de archivo)
+    // 1. Parsear directamente las credenciales desde la variable de entorno FIREBASE_CREDENTIALS
     if (process.env.FIREBASE_CREDENTIALS) {
-      const raw = process.env.FIREBASE_CREDENTIALS.trim();
-      if (raw.startsWith('{')) {
-        try {
-          return JSON.parse(raw);
-        } catch (err: any) {
-          console.warn('⚠️ No se pudo parsear FIREBASE_CREDENTIALS como JSON:', err?.message || err);
-        }
-      } else if (fs.existsSync(raw)) {
-        try {
-          return JSON.parse(fs.readFileSync(raw, 'utf8'));
-        } catch (err: any) {
-          console.warn(`⚠️ Error leyendo archivo en FIREBASE_CREDENTIALS (${raw}):`, err?.message || err);
-        }
+      try {
+        const credencialesRaw = process.env.FIREBASE_CREDENTIALS.trim();
+        const credencial = JSON.parse(credencialesRaw);
+        return credencial;
+      } catch (err: any) {
+        console.error('❌ Error al parsear FIREBASE_CREDENTIALS directamente con JSON.parse:', err?.message || err);
       }
     }
 

@@ -310,12 +310,12 @@ export class SifenCoreService {
       condicionVenta: 'Contado',
       moneda: 'PYG',
       emisor: {
-        ruc: '80069999-1',
-        razonSocial: 'EMPRESA DEMO S.A.',
-        nombreFantasia: 'DEMO SIFEN',
-        direccion: 'Avda. Mariscal López 1234',
-        telefono: '021-123456',
-        correo: 'facturacion@empresa.com.py'
+        ruc: opciones?.empresa?.ruc || '80012345-6',
+        razonSocial: opciones?.empresa?.razonSocial || 'EMPRESA DEMO S.A.',
+        nombreFantasia: opciones?.empresa?.nombreFantasia || opciones?.empresa?.razonSocial || 'DEMO SIFEN',
+        direccion: opciones?.empresa?.direccion || 'Avda. Mariscal López 1234',
+        telefono: opciones?.empresa?.telefono || '021-123456',
+        correo: opciones?.empresa?.correo || 'facturacion@empresa.com.py'
       },
       receptor: {
         ruc: '44444401-7',
