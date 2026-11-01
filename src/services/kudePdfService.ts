@@ -71,10 +71,18 @@ export class KudePdfService {
       kudeData?.sifen?.estado ||
       'Aprobado';
 
-    let qrUrl = kudeData?.qr?.url;
-    if (!qrUrl || qrUrl.includes('undefined') || qrUrl.includes('null')) {
+    let rawQrUrl = String(kudeData?.qr?.url || '');
+    if (!rawQrUrl || rawQrUrl.trim() === '') {
       const dFeEmiHex = Buffer.from(new Date().toISOString(), 'utf8').toString('hex');
-      qrUrl = `https://ekuatia.set.gov.py/consultas-test/qr?nVersion=150&Id=${cdc}&dFeEmiDE=${dFeEmiHex}&dRucRec=${kudeData?.receptor?.ruc || '44444401-7'}&dTotGralOpe=${kudeData?.totales?.totalGeneral || 100000}&dTotIVA=${kudeData?.totales?.totalIva || 9091}&cItems=1&DigestValue=abc1234567890&IdCSC=0001`;
+      rawQrUrl = `https://ekuatia.set.gov.py/consultas-test/qr?nVersion=150&Id=${cdc}&dFeEmiDE=${dFeEmiHex}&dRucRec=${kudeData?.receptor?.ruc || '44444401-7'}&dTotGralOpe=${kudeData?.totales?.totalGeneral || 100000}&dTotIVA=${kudeData?.totales?.totalIva || 9091}&cItems=1&DigestValue=abc1234567890&IdCSC=0001`;
+    }
+
+    // Eliminación estricta de 'undefined' antes de pasarle la URL a pdfmake
+    const qrUrlLimpia = rawQrUrl.replace(/undefined/g, '0001').replace(/null/g, '0001');
+    console.log("URL QR LIMPIA:", qrUrlLimpia);
+
+    if (kudeData?.qr) {
+      kudeData.qr.url = qrUrlLimpia;
     }
 
     const emisor = kudeData?.emisor || {
@@ -344,29 +352,30 @@ export class KudePdfService {
             margin: [0, 0, 0, 15]
           },
 
-          // 6. Código QR oficial y Leyenda Legal SIFEN (Renderizado vectorial nítido con espacio para módulos)
+          // 6. Código QR oficial y Leyenda Legal SIFEN (Renderizado vectorial nítido con fit: 150 y eccLevel: 'L')
           {
             columns: [
               {
-                width: 135,
-                qr: kudeData?.qr?.url || qrUrl,
-                fit: 120,
+                width: 170,
+                qr: qrUrlLimpia,
+                fit: 150,
+                eccLevel: 'L',
                 alignment: 'center',
-                eccLevel: 'L'
+                margin: [0, 10, 0, 10]
               },
               {
                 width: '*',
                 stack: [
                   { text: 'CONSULTA DE VALIDEZ DE ESTE DOCUMENTO ELECTRÓNICO', fontSize: 8.5, bold: true, color: '#0f172a' },
                   { text: 'Escanee el código QR o consulte en el portal oficial de la SET/DNIT ingresando el CDC:', fontSize: 7, color: '#475569', margin: [0, 2, 0, 3] },
-                  { text: kudeData?.qr?.url || qrUrl, fontSize: 6.5, color: '#0284c7' },
+                  { text: qrUrlLimpia, fontSize: 6.5, color: '#0284c7' },
                   { text: '', margin: [0, 4, 0, 0] },
                   { text: 'Este documento es una Representación Gráfica (KUDE) de un Documento Electrónico (DE) emitido conforme a las normativas de la Dirección Nacional de Ingresos Tributarios (DNIT) de la República del Paraguay.', fontSize: 6.5, italics: true, color: '#64748b' }
                 ],
-                margin: [12, 5, 0, 0]
+                margin: [10, 15, 0, 0]
               }
             ],
-            margin: [0, 8, 0, 0]
+            margin: [0, 5, 0, 0]
           }
         ]
       };
@@ -393,7 +402,7 @@ export class KudePdfService {
       };
     } catch (error: any) {
       console.error('❌ Error generando PDF con pdfmake, generando PDF fallback estructurado:', error?.message || error);
-      const fallbackBuffer = this.generarPdfFallback(cdc, numeroProtocolo, qrUrl, totales.totalGeneral);
+      const fallbackBuffer = this.generarPdfFallback(cdc, numeroProtocolo, qrUrlLimpia, totales.totalGeneral);
       this.guardarEnCache(cdc, fallbackBuffer);
       return {
         buffer: fallbackBuffer,

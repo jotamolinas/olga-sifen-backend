@@ -295,6 +295,9 @@ export class SifenCoreService {
       }
     }
 
+    // Asegurar reemplazo estricto de cualquier residuo 'undefined' o 'null'
+    qrUrl = qrUrl.replace(/undefined/g, '0001').replace(/null/g, '0001');
+
     // 3. Preparar estructura canónica para el renderizado del KUDE (Representación Gráfica del DE)
     const kudeData = {
       cdc,
