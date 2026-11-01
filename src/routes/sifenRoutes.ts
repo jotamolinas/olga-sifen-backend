@@ -1,14 +1,55 @@
 import { Router, Request, Response } from 'express';
 import axios from 'axios';
 import path from 'path';
+import multer from 'multer';
 import { XMLParser } from 'fast-xml-parser';
 import { verificarAlcanceSifen } from '../middlewares/alcance.js';
+import superadminAuth from '../middlewares/superadminAuth.js';
 import { TenantService, EmpresaTenant, TenantConfig } from '../services/tenantService.js';
 import { SifenCoreService } from '../services/sifenCoreService.js';
 import { obtenerDatosPruebaSifenV150 } from '../services/sifenDefaultTestData.js';
 import { KudePdfService } from '../services/kudePdfService.js';
 
 const router = Router();
+
+// Configuración de multer en memoria para subida segura de certificados (.p12)
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 10 * 1024 * 1024 // Límite de 10MB
+  }
+});
+
+// Middleware auxiliar de subida que acepta tanto el campo 'certificado' como 'file'
+const uploadCertificadoMiddleware = (req: Request, res: Response, next: (err?: any) => void): void => {
+  const uploadHandler = upload.fields([
+    { name: 'certificado', maxCount: 1 },
+    { name: 'file', maxCount: 1 }
+  ]);
+
+  uploadHandler(req, res, (err: any) => {
+    if (err) {
+      res.status(400).json({
+        success: false,
+        codigo: 'UPLOAD_ERROR',
+        mensaje: err.message || 'Error al procesar el archivo adjunto.',
+        timestamp: new Date().toISOString()
+      });
+      return;
+    }
+
+    // Normalizar a req.file si vino en req.files
+    if (!req.file && (req as any).files) {
+      const files = (req as any).files;
+      if (files.certificado && files.certificado[0]) {
+        req.file = files.certificado[0];
+      } else if (files.file && files.file[0]) {
+        req.file = files.file[0];
+      }
+    }
+    next();
+  });
+};
 
 /**
  * Controlador para la prueba de conexión y diagnóstico del microservicio SIFEN.
@@ -556,6 +597,124 @@ const generarKudePdfHandler = async (req: Request, res: Response): Promise<void>
 };
 
 /**
+ * Controlador para Onboarding de nuevos inquilinos SaaS (Protegido por superadminAuth)
+ * Recibe un archivo .p12 y los datos de la empresa vía multipart/form-data.
+ */
+const onboardingTenantHandler = async (req: Request, res: Response): Promise<void> => {
+  try {
+    // 1. Obtener el archivo .p12 desde req.file
+    const p12File = req.file;
+
+    if (!p12File || !p12File.buffer || p12File.buffer.length === 0) {
+      res.status(400).json({
+        success: false,
+        codigo: 'MISSING_CERTIFICATE_FILE',
+        mensaje: 'Se requiere adjuntar el archivo del certificado digital (.p12) en el campo "certificado".',
+        timestamp: new Date().toISOString()
+      });
+      return;
+    }
+
+    // 2. Extraer y validar los campos de texto
+    const {
+      ruc,
+      razonSocial,
+      csc,
+      idCsc,
+      claveCertificado,
+      ambiente,
+      nombreFantasia,
+      timbradoNumero,
+      timbradoFecha,
+      establecimiento,
+      puntoExpedicion,
+      direccion,
+      telefono,
+      correo
+    } = req.body;
+
+    const faltantes: string[] = [];
+    if (!ruc || typeof ruc !== 'string' || !ruc.trim()) faltantes.push('ruc');
+    if (!razonSocial || typeof razonSocial !== 'string' || !razonSocial.trim()) faltantes.push('razonSocial');
+    if (!csc || typeof csc !== 'string' || !csc.trim()) faltantes.push('csc');
+    if (!idCsc || typeof idCsc !== 'string' || !idCsc.trim()) faltantes.push('idCsc');
+    if (!claveCertificado || typeof claveCertificado !== 'string' || !claveCertificado.trim()) faltantes.push('claveCertificado');
+
+    if (faltantes.length > 0) {
+      res.status(400).json({
+        success: false,
+        codigo: 'MISSING_REQUIRED_FIELDS',
+        mensaje: `Los siguientes campos son obligatorios: ${faltantes.join(', ')}`,
+        camposFaltantes: faltantes,
+        timestamp: new Date().toISOString()
+      });
+      return;
+    }
+
+    // Parsear actividades económicas si vienen como string JSON
+    let actividadesEconomicas = req.body.actividadesEconomicas;
+    if (typeof actividadesEconomicas === 'string') {
+      try {
+        actividadesEconomicas = JSON.parse(actividadesEconomicas);
+      } catch {
+        actividadesEconomicas = [];
+      }
+    }
+
+    // 3. Registrar inquilino usando TenantService (sube a Cloud Storage y registra en Firestore)
+    const nuevoTenant = await TenantService.registrarNuevoTenant(
+      {
+        ruc: ruc.trim(),
+        razonSocial: razonSocial.trim(),
+        csc: csc.trim(),
+        idCsc: idCsc.trim(),
+        claveCertificado: claveCertificado.trim(),
+        ambiente: ambiente === 'prod' ? 'prod' : 'test',
+        nombreFantasia: nombreFantasia ? String(nombreFantasia).trim() : undefined,
+        timbradoNumero: timbradoNumero ? String(timbradoNumero).trim() : undefined,
+        timbradoFecha: timbradoFecha ? String(timbradoFecha).trim() : undefined,
+        establecimiento: establecimiento ? String(establecimiento).trim() : '001',
+        puntoExpedicion: puntoExpedicion ? String(puntoExpedicion).trim() : '001',
+        direccion: direccion ? String(direccion).trim() : undefined,
+        telefono: telefono ? String(telefono).trim() : undefined,
+        correo: correo ? String(correo).trim() : undefined,
+        actividadesEconomicas: Array.isArray(actividadesEconomicas) ? actividadesEconomicas : undefined
+      },
+      p12File.buffer
+    );
+
+    // 4. Responder con código 201 Created y los datos registrados (sin exponer la clave)
+    res.status(201).json({
+      success: true,
+      codigo: 'TENANT_ONBOARDED',
+      mensaje: `Inquilino '${nuevoTenant.razonSocial}' (RUC: ${nuevoTenant.ruc}) registrado exitosamente.`,
+      inquilino: {
+        ruc: nuevoTenant.ruc,
+        razonSocial: nuevoTenant.razonSocial,
+        ambiente: nuevoTenant.ambiente,
+        idCsc: nuevoTenant.idCsc,
+        rutaCertificadoStorage: nuevoTenant.rutaCertificadoStorage,
+        establecimiento: nuevoTenant.establecimiento,
+        puntoExpedicion: nuevoTenant.puntoExpedicion,
+        activo: nuevoTenant.activo,
+        creadoEn: nuevoTenant.creadoEn,
+        actualizadoEn: nuevoTenant.actualizadoEn
+      },
+      timestamp: new Date().toISOString()
+    });
+  } catch (error: any) {
+    console.error('❌ [Onboarding Tenant Error]:', error);
+    res.status(500).json({
+      success: false,
+      codigo: 'ONBOARDING_ERROR',
+      mensaje: 'Ocurrió un error al registrar el nuevo inquilino.',
+      error: error?.message || String(error),
+      timestamp: new Date().toISOString()
+    });
+  }
+};
+
+/**
  * Endpoints registrados
  */
 router.post('/generar-xml-prueba', generarXmlPruebaHandler);
@@ -570,5 +729,9 @@ router.get('/enviar-set-prueba', enviarSetPruebaHandler);
 router.get('/descargar-kude/:cdc', descargarKudeHandler);
 router.get('/descargar-kude', descargarKudeHandler);
 router.post('/generar-kude-pdf', generarKudePdfHandler);
+
+// Endpoint de Onboarding SaaS protegido por x-superadmin-api-key
+router.post('/admin/onboarding', superadminAuth, uploadCertificadoMiddleware, onboardingTenantHandler);
+router.post('/onboarding', superadminAuth, uploadCertificadoMiddleware, onboardingTenantHandler);
 
 export default router;

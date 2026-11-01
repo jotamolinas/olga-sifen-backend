@@ -197,6 +197,107 @@ export class TenantService {
   }
 
   /**
+   * Registra un nuevo inquilino en la plataforma SaaS:
+   * 1. Sube el archivo .p12 recibido en memoria a Cloud Storage en la ruta `certificados/{ruc}.p12`.
+   * 2. Registra todos los datos del inquilino en la colección 'empresas' de Firestore.
+   * 3. Invalida y refresca el cache local en memoria.
+   * 
+   * @param datos Objeto con los datos de la empresa (ruc, razonSocial, csc, idCsc, claveCertificado, etc.)
+   * @param archivoP12Buffer Buffer del archivo .p12 subido en memoria
+   */
+  public static async registrarNuevoTenant(
+    datos: {
+      ruc: string;
+      razonSocial: string;
+      csc: string;
+      idCsc: string;
+      claveCertificado: string;
+      ambiente?: 'test' | 'prod';
+      nombreFantasia?: string;
+      timbradoNumero?: string;
+      timbradoFecha?: string;
+      establecimiento?: string;
+      puntoExpedicion?: string;
+      direccion?: string;
+      telefono?: string;
+      correo?: string;
+      actividadesEconomicas?: Array<{ codigo: string; descripcion: string }>;
+    },
+    archivoP12Buffer: Buffer
+  ): Promise<EmpresaTenant> {
+    const rucNormalizado = this.normalizarRuc(datos.ruc);
+    if (!rucNormalizado) {
+      throw new Error('El RUC de la empresa es obligatorio.');
+    }
+    if (!datos.razonSocial?.trim()) {
+      throw new Error('La razón social de la empresa es obligatoria.');
+    }
+    if (!datos.csc?.trim()) {
+      throw new Error('El código de seguridad del contribuyente (CSC) es obligatorio.');
+    }
+    if (!datos.idCsc?.trim()) {
+      throw new Error('El identificador de CSC (idCsc) es obligatorio.');
+    }
+    if (!datos.claveCertificado?.trim()) {
+      throw new Error('La contraseña del certificado digital (claveCertificado) es obligatoria.');
+    }
+    if (!archivoP12Buffer || archivoP12Buffer.length === 0) {
+      throw new Error('El archivo del certificado digital (.p12) es obligatorio.');
+    }
+
+    const bucket = FirebaseService.bucket;
+    const rutaStorage = `certificados/${rucNormalizado}.p12`;
+
+    console.log(`📤 [Cloud Storage] Subiendo certificado para ${rucNormalizado} a gs://${bucket.name}/${rutaStorage}...`);
+    const file = bucket.file(rutaStorage);
+
+    await file.save(archivoP12Buffer, {
+      contentType: 'application/x-pkcs12',
+      resumable: false,
+      metadata: {
+        ruc: rucNormalizado,
+        subidoEn: new Date().toISOString()
+      }
+    });
+
+    console.log(`✅ [Cloud Storage] Certificado subido exitosamente a ${rutaStorage}.`);
+
+    // 2. Registrar datos en Firestore en la colección 'empresas'
+    const firestore = FirebaseService.db;
+    const coleccion = firestore.collection(this.COLECCION_EMPRESAS);
+
+    const nuevoTenant: EmpresaTenant = {
+      ruc: rucNormalizado,
+      razonSocial: datos.razonSocial.trim(),
+      csc: datos.csc.trim(),
+      idCsc: datos.idCsc.trim(),
+      rutaCertificadoStorage: rutaStorage,
+      claveCertificado: datos.claveCertificado.trim(),
+      ambiente: datos.ambiente || 'test',
+      nombreFantasia: datos.nombreFantasia?.trim(),
+      timbradoNumero: datos.timbradoNumero?.trim(),
+      timbradoFecha: datos.timbradoFecha?.trim(),
+      establecimiento: datos.establecimiento?.trim() || '001',
+      puntoExpedicion: datos.puntoExpedicion?.trim() || '001',
+      direccion: datos.direccion?.trim(),
+      telefono: datos.telefono?.trim(),
+      correo: datos.correo?.trim(),
+      actividadesEconomicas: datos.actividadesEconomicas || [],
+      activo: true,
+      creadoEn: new Date().toISOString(),
+      actualizadoEn: new Date().toISOString()
+    };
+
+    await coleccion.doc(rucNormalizado).set(nuevoTenant, { merge: true });
+    console.log(`✅ [Firestore] Empresa registrada exitosamente con ID ${rucNormalizado}.`);
+
+    // 3. Invalidar cache previo para este RUC
+    this.invalidarCache(rucNormalizado);
+
+    return nuevoTenant;
+  }
+
+  /**
    * Limpia manualmente el cache de un inquilino (útil cuando actualiza su certificado en Storage)
    */
   public static invalidarCache(ruc: string): void {

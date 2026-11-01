@@ -27,6 +27,9 @@ app.get('/health', (_req: Request, res: Response) => {
   });
 });
 
+// Rutas de administración y onboarding SaaS
+app.use('/api', sifenRoutes);
+
 // Rutas de facturación electrónica SIFEN
 app.use('/api/sifen', sifenRoutes);
 
