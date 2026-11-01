@@ -98,6 +98,12 @@ export class FirebaseService {
     this.inicializar();
     if (!firestoreInstance) {
       firestoreInstance = getFirestore();
+      try {
+        firestoreInstance.settings({ ignoreUndefinedProperties: true });
+      } catch (settingsError: any) {
+        // En caso de que ya haya sido inicializado previamente con configuración por defecto
+        console.warn('⚠️ No se pudo aplicar ignoreUndefinedProperties a Firestore:', settingsError?.message || settingsError);
+      }
     }
     return firestoreInstance;
   }

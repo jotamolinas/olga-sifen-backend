@@ -266,7 +266,8 @@ export class TenantService {
     const firestore = FirebaseService.db;
     const coleccion = firestore.collection(this.COLECCION_EMPRESAS);
 
-    const nuevoTenant: EmpresaTenant = {
+    // Preparar objeto base con valores por defecto para evitar 'undefined' en Firestore
+    const tenantBase: Record<string, any> = {
       ruc: rucNormalizado,
       razonSocial: datos.razonSocial.trim(),
       csc: datos.csc.trim(),
@@ -274,27 +275,64 @@ export class TenantService {
       rutaCertificadoStorage: rutaStorage,
       claveCertificado: datos.claveCertificado.trim(),
       ambiente: datos.ambiente || 'test',
-      nombreFantasia: datos.nombreFantasia?.trim(),
-      timbradoNumero: datos.timbradoNumero?.trim(),
-      timbradoFecha: datos.timbradoFecha?.trim(),
       establecimiento: datos.establecimiento?.trim() || '001',
       puntoExpedicion: datos.puntoExpedicion?.trim() || '001',
-      direccion: datos.direccion?.trim(),
-      telefono: datos.telefono?.trim(),
-      correo: datos.correo?.trim(),
-      actividadesEconomicas: datos.actividadesEconomicas || [],
+      actividadesEconomicas: Array.isArray(datos.actividadesEconomicas) ? datos.actividadesEconomicas : [],
       activo: true,
       creadoEn: new Date().toISOString(),
       actualizadoEn: new Date().toISOString()
     };
 
-    await coleccion.doc(rucNormalizado).set(nuevoTenant, { merge: true });
+    // Agregar campos opcionales únicamente si contienen un valor definido y no vacío
+    if (datos.nombreFantasia && typeof datos.nombreFantasia === 'string' && datos.nombreFantasia.trim()) {
+      tenantBase.nombreFantasia = datos.nombreFantasia.trim();
+    }
+    if (datos.timbradoNumero && typeof datos.timbradoNumero === 'string' && datos.timbradoNumero.trim()) {
+      tenantBase.timbradoNumero = datos.timbradoNumero.trim();
+    }
+    if (datos.timbradoFecha && typeof datos.timbradoFecha === 'string' && datos.timbradoFecha.trim()) {
+      tenantBase.timbradoFecha = datos.timbradoFecha.trim();
+    }
+    if (datos.direccion && typeof datos.direccion === 'string' && datos.direccion.trim()) {
+      tenantBase.direccion = datos.direccion.trim();
+    }
+    if (datos.telefono && typeof datos.telefono === 'string' && datos.telefono.trim()) {
+      tenantBase.telefono = datos.telefono.trim();
+    }
+    if (datos.correo && typeof datos.correo === 'string' && datos.correo.trim()) {
+      tenantBase.correo = datos.correo.trim();
+    }
+
+    // Sanitizar explícitamente eliminando cualquier propiedad con valor undefined
+    const tenantSanitizado = this.sanitizarParaFirestore(tenantBase);
+
+    await coleccion.doc(rucNormalizado).set(tenantSanitizado, { merge: true });
     console.log(`✅ [Firestore] Empresa registrada exitosamente con ID ${rucNormalizado}.`);
 
     // 3. Invalidar cache previo para este RUC
     this.invalidarCache(rucNormalizado);
 
-    return nuevoTenant;
+    return tenantSanitizado as EmpresaTenant;
+  }
+
+  /**
+   * Sanitiza cualquier objeto o estructura antes de enviarla a Firestore,
+   * eliminando de forma recursiva cualquier clave cuyo valor sea `undefined`
+   * para prevenir el error 'Cannot use undefined as a Firestore value'.
+   */
+  public static sanitizarParaFirestore<T extends Record<string, any>>(obj: T): T {
+    const sanitizado: Record<string, any> = {};
+    for (const [key, value] of Object.entries(obj)) {
+      if (value === undefined) {
+        continue;
+      }
+      if (value !== null && typeof value === 'object' && !Array.isArray(value) && !(value instanceof Date)) {
+        sanitizado[key] = this.sanitizarParaFirestore(value);
+      } else {
+        sanitizado[key] = value;
+      }
+    }
+    return sanitizado as T;
   }
 
   /**
