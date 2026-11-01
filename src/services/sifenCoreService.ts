@@ -9,6 +9,7 @@ import xmlsign from 'facturacionelectronicapy-xmlsign';
 import qrgen from 'facturacionelectronicapy-qrgen';
 import setApi from 'facturacionelectronicapy-setapi';
 import { KudePdfService } from './kudePdfService.js';
+import { EmpresaTenant } from './tenantService.js';
 
 // Soporte bidireccional para interoperabilidad ESM / CommonJS
 const xmlgenLib: any = (xmlgen as any)?.default || xmlgen;
@@ -45,6 +46,15 @@ export interface EnviarSetResponse {
   respuestaRaw?: any;
   xml_firmado?: string;
   xml_con_qr?: string;
+}
+
+export interface OpcionesTransmision {
+  mockResponse?: boolean;
+  idCSC?: string;
+  csc?: string;
+  datosFactura?: any;
+  empresa?: EmpresaTenant | any;
+  [key: string]: any;
 }
 
 /**
@@ -163,12 +173,7 @@ export class SifenCoreService {
     password: string,
     env: 'test' | 'prod' = 'test',
     id?: number,
-    opciones?: {
-      mockResponse?: boolean;
-      idCSC?: string;
-      csc?: string;
-      datosFactura?: any;
-    }
+    opciones?: OpcionesTransmision
   ): Promise<EnviarSetResponse> {
     inicializarMonkeyPatchXmlSign();
 

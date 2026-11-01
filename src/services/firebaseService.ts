@@ -64,9 +64,10 @@ export class FirebaseService {
 
     const credencialObj = this.resolverCredencial();
 
+    const projectId = (credencialObj as any)?.projectId || (credencialObj as any)?.project_id || 'nipponguay';
     const storageBucket =
       process.env.FIREBASE_STORAGE_BUCKET ||
-      (credencialObj?.projectId ? `${credencialObj.projectId}.appspot.com` : 'nipponguay.appspot.com');
+      `${projectId}.appspot.com`;
 
     try {
       if (credencialObj) {
@@ -74,7 +75,7 @@ export class FirebaseService {
           credential: admin.credential.cert(credencialObj),
           storageBucket
         });
-        console.log(`🔥 [Firebase Admin] Inicializado exitosamente con proyecto: ${credencialObj.projectId}`);
+        console.log(`🔥 [Firebase Admin] Inicializado exitosamente con proyecto: ${projectId}`);
       } else {
         // Fallback para Google Cloud Run (Application Default Credentials del contenedor)
         admin.initializeApp({
