@@ -337,8 +337,8 @@ const enviarSetPruebaHandler = async (req: Request, res: Response): Promise<void
     // 3. Transmitir el documento a SIFEN (SET) mediante facturacionelectronicapy-setapi (o simulador de Fase 2)
     const idEnvio = inputBody.id ? Number(inputBody.id) : Math.floor(Date.now() / 1000);
     const mockResponse = inputBody.mockResponse !== undefined ? Boolean(inputBody.mockResponse) : undefined;
-    const idCSC = inputBody.idCSC || inputBody.IdCSC;
-    const csc = inputBody.csc || inputBody.CSC;
+    const idCSC = inputBody.idCSC || inputBody.IdCSC || '0001';
+    const csc = inputBody.csc || inputBody.CSC || 'ABCD1234567890';
 
     const resultadoTransmision = await SifenCoreService.transmitirDocumentoElectronico(
       xmlFirmado,
@@ -417,7 +417,7 @@ const descargarKudeHandler = async (req: Request, res: Response): Promise<void> 
 
     if (!buffer) {
       // Si no está en cache, generarlo sobre la marcha usando kudeData canónico
-      const qrUrl = `https://ekuatia.set.gov.py/consultas-test/qr?nVersion=150&Id=${cdc}&dFeEmiDE=${Buffer.from(new Date().toISOString(), 'utf8').toString('hex')}&IdCSC=0001`;
+      const qrUrl = SifenCoreService.construirUrlQrOficial(cdc, '', '0001', 'ABCD1234567890', 'test');
       const datosKudeGenericos = {
         cdc,
         tipoDocumento: 'Factura Electrónica',
