@@ -20,6 +20,7 @@
     "facturacionelectronicapy-xmlgen": "^1.0.0",
     "facturacionelectronicapy-xmlsign": "^1.0.0",
     "fast-xml-parser": "^4.5.1",
+    "firebase-admin": "^12.0.0",
     "pdfmake": "^0.2.18"
   },
   "devDependencies": {

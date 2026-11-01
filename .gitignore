@@ -8,3 +8,13 @@ certs/*.p12
 # Excepción explícita para el certificado de prueba del entorno SIFEN
 !certs/certificado.p12
 .DS_Store
+
+# Seguridad estricta para secretos y credenciales de Firebase
+secrets/
+secrets/*
+firebase-adminsdk.json
+*firebase-adminsdk*.json
+*.json
+!package.json
+!package-lock.json
+!tsconfig.json
